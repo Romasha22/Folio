@@ -28,4 +28,4 @@ pip install pyside6-essentials python-docx
 python folio.py
 ```
 
-Новая версия: поменять `APP_VERSION` в `folio.py` и отправить тег `vX.Y.Z`. GitHub соберёт Folio.exe и выпустит релиз сам.
+Новая версия: поменять `APP_VERSION` в `folio.py` и отправить изменения в `main`. GitHub соберёт Folio.exe и выпустит релиз сам.
