@@ -32,12 +32,12 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QTextEdit, QT
                                QWidgetAction, QGridLayout, QLineEdit, QDialog, QSpinBox,
                                QSizePolicy, QListWidget, QListWidgetItem, QStyledItemDelegate,
                                QStyle, QStackedWidget, QAbstractItemView, QListView, QToolTip,
-                               QCheckBox, QColorDialog)
+                               QCheckBox, QColorDialog, QLayout)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 APP_NAME = "Folio"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 GITHUB_REPO = "Romasha22/Folio"
 DEFAULT_FONT = "Segoe UI"
 DEFAULT_SIZE = 12
@@ -419,6 +419,16 @@ def load_docx(path, qdoc: QTextDocument):
             bf.setHeadingLevel(level)
             cf.setFontPointSize(HEADING_SIZES[level])
             cf.setFontWeight(700)
+        try:
+            pf = para.paragraph_format
+            if pf.left_indent:
+                bf.setLeftMargin(pf.left_indent.pt / 0.75)
+            if pf.right_indent:
+                bf.setRightMargin(pf.right_indent.pt / 0.75)
+            if pf.first_line_indent:
+                bf.setTextIndent(pf.first_line_indent.pt / 0.75)
+        except Exception:
+            pass
         if para.alignment in align_map:
             bf.setAlignment(align_map[para.alignment])
 
@@ -588,6 +598,13 @@ def save_docx(qdoc: QTextDocument, path):
             para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         elif al & Qt.AlignmentFlag.AlignRight:
             para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        pf = para.paragraph_format  # отступы абзаца (px при 96 dpi → pt)
+        if bf.leftMargin() > 0.5 and not (lst is not None and marker != NO_MARKER):
+            pf.left_indent = Pt(bf.leftMargin() * 0.75)
+        if bf.rightMargin() > 0.5:
+            pf.right_indent = Pt(bf.rightMargin() * 0.75)
+        if abs(bf.textIndent()) > 0.5:
+            pf.first_line_indent = Pt(bf.textIndent() * 0.75)
 
         it = block.begin()
         while not it.atEnd():
@@ -732,12 +749,22 @@ def block_fragments(block):
             yield f
 
 
+def paged_clone(qdoc):
+    """Копия документа, разбитая на страницы A4 точно так, как она пойдёт в печать и PDF."""
+    clone = qdoc.clone()
+    clone.setDocumentMargin(0)
+    ff = clone.rootFrame().frameFormat()
+    ff.setMargin(0)
+    clone.rootFrame().setFrameFormat(ff)
+    w, h = page_px_size()
+    clone.setPageSize(QSizeF(w, h))
+    return clone
+
+
 def print_document(qdoc, printer):
     printer.setPageLayout(QPageLayout(QPageSize(QPageSize.PageSizeId.A4), QPageLayout.Orientation.Portrait,
                                       QMarginsF(18, 18, 18, 18), QPageLayout.Unit.Millimeter))
-    clone = qdoc.clone()
-    clone.setDocumentMargin(0)
-    clone.print_(printer)
+    paged_clone(qdoc).print_(printer)
 
 
 def _rtf_text(text):
@@ -836,6 +863,13 @@ def save_rtf(qdoc, path):
         lvl = min(bf.headingLevel(), 3)
         base = HEADING_SIZES[lvl] if lvl else DEFAULT_SIZE
         parts.append("\\sb240\\sa120" if lvl else "\\sa120")
+        if block.textList() is None:
+            if bf.leftMargin() > 0.5:
+                parts.append(f"\\li{round(bf.leftMargin() * 15)}")
+            if abs(bf.textIndent()) > 0.5:
+                parts.append(f"\\fi{round(bf.textIndent() * 15)}")
+        if bf.rightMargin() > 0.5:
+            parts.append(f"\\ri{round(bf.rightMargin() * 15)}")
         prefix = ""
         lst = block.textList()
         if lst is not None:
@@ -1272,6 +1306,51 @@ class SmartEdit(QTextEdit):
 
 class Editor(SmartEdit):
     fileDropped = Signal(str)
+    page_breaks_y = []   # [(номер страницы, y в документе)]
+    guide_x = None
+
+    def set_guide(self, x):
+        self.guide_x = x
+        self.viewport().update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        w = self.window()
+        th = getattr(w, "th", None)
+        if th is None:
+            return
+        p = QPainter(self.viewport())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        scroll = self.verticalScrollBar().value()
+        vw = self.viewport().width()
+        if self.page_breaks_y and getattr(w, "show_breaks", True):
+            col = QColor(th["muted"])
+            col.setAlpha(150)
+            f = QFont(getattr(w, "ui_font", "Segoe UI"))
+            f.setPixelSize(10)
+            f.setBold(True)
+            p.setFont(f)
+            fm = QFontMetrics(f)
+            for n, y_doc in self.page_breaks_y:
+                y = y_doc - scroll - 5
+                if y < -20 or y > self.viewport().height() + 20:
+                    continue
+                pen = QPen(col, 1, Qt.PenStyle.DashLine)
+                pen.setDashPattern([5, 4])
+                p.setPen(pen)
+                p.drawLine(QPointF(10, y), QPointF(vw - 10, y))
+                label = f"стр. {n}"
+                lw = fm.horizontalAdvance(label) + 16
+                r = QRectF(vw - lw - 14, y - 9, lw, 18)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(th["hover"]))
+                p.drawRoundedRect(r, 9, 9)
+                p.setPen(QColor(th["muted"]))
+                p.drawText(r, Qt.AlignmentFlag.AlignCenter, label)
+        if self.guide_x is not None:
+            pen = QPen(QColor(th["accent"]), 1, Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawLine(QPointF(self.guide_x, 0), QPointF(self.guide_x, self.viewport().height()))
 
     def mousePressEvent(self, e):
         w = self.window()
@@ -2558,6 +2637,31 @@ class SettingsDialog(QDialog):
         self.sl_tint = slider_row("Стекло: плотность", 5, 90, float(self.s.value("glass_tint", 0.40)) * 100,
                                   "glass_tint", 0.01, "%")
         self.sl_blur = slider_row("Стекло: размытие", 2, 30, float(self.s.value("glass_blur", 12)), "glass_blur", 1)
+        self.sl_tbs = slider_row("Размер панели текста", 70, 150, float(self.s.value("toolbar_scale", 1.0)) * 100,
+                                 "toolbar_scale", 0.01, "%")
+        self.sl_tbf = slider_row("Шрифт на панели текста", 7, 13, float(self.s.value("toolbar_font", 10)),
+                                 "toolbar_font", 1, " pt")
+        bar_row = QHBoxLayout()
+        bl = QLabel("Панель текста")
+        bl.setFixedWidth(170)
+        bar_row.addWidget(bl)
+        self.bar_btns = {}
+        for key, label in (("dock", "Над текстом"), ("float", "Поверх текста (стекло)")):
+            b = QPushButton(label)
+            b.setObjectName("Seg")
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            b.setChecked(self.s.value("bar_mode", "dock") == key)
+            b.clicked.connect(lambda _=False, k=key: (self.s.setValue("bar_mode", k), self.win.apply_theme()))
+            bar_row.addWidget(b)
+        bar_row.addStretch()
+        lay.addLayout(bar_row)
+        for key, label in (("rulers", "Линейки (отступы абзаца — тяни бегунки)"),
+                           ("page_breaks", "Показывать, где заканчиваются страницы (для печати и PDF)")):
+            cb = QCheckBox(label)
+            cb.setChecked(self.s.value(key, "true") in (True, "true"))
+            cb.toggled.connect(lambda on, k=key: (self.s.setValue(k, "true" if on else "false"), self.win.apply_theme()))
+            lay.addWidget(cb)
         self.snap_cb = QCheckBox("Притягивать стикеры к сетке и друг к другу")
         self.snap_cb.setChecked(self.s.value("snap", "true") in (True, "true"))
         self.snap_cb.toggled.connect(lambda on: self.s.setValue("snap", "true" if on else "false"))
@@ -2741,7 +2845,8 @@ class SettingsDialog(QDialog):
 
     SETTINGS_KEYS = ("theme", "accent", "tint", "glass", "glass_tint", "glass_blur", "page_light", "page_dark",
                      "text_light", "text_dark", "doc_font", "doc_size", "ui_round", "ui_font", "page_width",
-                     "snap", "inspector_auto", "recent_colors")
+                     "snap", "inspector_auto", "recent_colors", "toolbar_scale", "toolbar_font", "bar_mode",
+                     "rulers", "page_breaks")
 
     def export_settings(self):
         path, _ = QFileDialog.getSaveFileName(self, "Сохранить настройки", str(Path.home() / "Documents" / "Folio-настройки.json"),
@@ -2819,7 +2924,7 @@ class SettingsDialog(QDialog):
         self.win.apply_theme()
 
     def reset_all(self):
-        for k in ("ui_round", "ui_font", "page_width", "glass_tint", "glass_blur", "snap", "inspector_auto",
+        for k in ("toolbar_scale", "toolbar_font", "bar_mode", "rulers", "page_breaks", "ui_round", "ui_font", "page_width", "glass_tint", "glass_blur", "snap", "inspector_auto",
                   "accent", "tint", "glass", "page_light", "page_dark", "text_light", "text_dark", "doc_font", "doc_size"):
             self.s.remove(k)
         self.font.blockSignals(True)
@@ -4134,6 +4239,308 @@ class StickerLayer(QObject):
 
 
 # ───────────────────────────── Стеклянная панель ─────────────────────────────
+class FlowLayout(QLayout):
+    """Раскладка «как текст»: элементы в строку, а если не влезают — переносятся на следующую."""
+    def __init__(self, parent=None, hspacing=2, vspacing=4):
+        super().__init__(parent)
+        self.items = []
+        self.hs, self.vs = hspacing, vspacing
+
+    def addItem(self, item):
+        self.items.append(item)
+
+    def addSpacing(self, w):
+        sp = QWidget()
+        sp.setFixedSize(w, 1)
+        sp.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.addWidget(sp)
+
+    def count(self):
+        return len(self.items)
+
+    def itemAt(self, i):
+        return self.items[i] if 0 <= i < len(self.items) else None
+
+    def takeAt(self, i):
+        return self.items.pop(i) if 0 <= i < len(self.items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        return self._do(QRect(0, 0, w, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def one_row_width(self):
+        m = self.contentsMargins()
+        ws = [it.sizeHint().width() for it in self.items if not it.isEmpty()]
+        return sum(ws) + self.hs * max(0, len(ws) - 1) + m.left() + m.right()
+
+    def minimumSize(self):
+        s = QSize()
+        for it in self.items:
+            s = s.expandedTo(it.minimumSize())
+        m = self.contentsMargins()
+        return s + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _do(self, rect, test):
+        m = self.contentsMargins()
+        r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        rows, row, x = [], [], r.x()
+        for it in self.items:
+            if it.isEmpty():
+                continue
+            w = it.sizeHint().width()
+            if row and x + w > r.right() + 1:
+                rows.append(row)
+                row, x = [], r.x()
+            row.append(it)
+            x += w + self.hs
+        if row:
+            rows.append(row)
+        # строка не должна начинаться с разделителя
+        y = r.y()
+        for row in rows:
+            while row and row[0].widget() is not None and row[0].widget().objectName() in ("Sep", ""):
+                if row[0].widget().objectName() == "Sep" or row[0].widget().maximumHeight() <= 1:
+                    if not test:
+                        row[0].setGeometry(QRect(-100, -100, 0, 0))
+                    row = row[1:]
+                else:
+                    break
+            if not row:
+                continue
+            h = max(it.sizeHint().height() for it in row)
+            total = sum(it.sizeHint().width() for it in row) + self.hs * (len(row) - 1)
+            x = r.x() + max(0, (r.width() - total) // 2)  # строки по центру
+            if not test:
+                for it in row:
+                    sh = it.sizeHint()
+                    it.setGeometry(QRect(QPoint(x, y + (h - sh.height()) // 2), sh))
+                    x += sh.width() + self.hs
+            y += h + self.vs
+        return y - self.vs - rect.y() + m.bottom() if rows else m.top() + m.bottom()
+
+
+def page_px_size():
+    """Область печати A4 (поля 18 мм) в пикселях при 96 dpi — так же, как её раскладывает печать Qt."""
+    mm = 96 / 25.4
+    return (210 - 36) * mm, (297 - 36) * mm
+
+
+def compute_page_breaks(qdoc):
+    """Позиции в тексте, с которых начинается каждая следующая страница при печати/PDF."""
+    clone = paged_clone(qdoc)
+    w, h = page_px_size()
+    n = clone.pageCount()
+    lay = clone.documentLayout()
+    out = []
+    for k in range(1, n):
+        pos = lay.hitTest(QPointF(4, k * h + 3), Qt.HitTestAccuracy.FuzzyHit)
+        if pos >= 0:
+            out.append((k + 1, pos))
+    return out
+
+
+class RulerH(QWidget):
+    """Горизонтальная линейка с бегунками отступов, как в Word."""
+    H = 26
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.setFixedHeight(self.H)
+        self.setMouseTracking(True)
+        self._drag = None
+        self.setToolTip("Тяни бегунки: ▽ — первая строка, △ — отступ абзаца слева, △ справа — отступ справа.\n"
+                        "Двойной клик — сбросить отступы. Alt — без привязки к шагу.")
+
+    def ppcm(self):
+        return self.logicalDpiX() / 2.54
+
+    def geom(self):
+        """x начала и конца области текста в координатах линейки."""
+        ed = self.win.editor
+        vp = ed.viewport()
+        left = vp.mapTo(self.window(), QPoint(0, 0)).x() - self.mapTo(self.window(), QPoint(0, 0)).x()
+        m = ed.document().documentMargin()
+        return left + m, left + vp.width() - m
+
+    def block_fmt(self):
+        return self.win.editor.textCursor().blockFormat()
+
+    def markers(self):
+        x0, x1 = self.geom()
+        bf = self.block_fmt()
+        lst = self.win.editor.textCursor().currentList()
+        list_ind = lst.format().indent() * self.win.editor.document().indentWidth() if lst is not None else 0
+        left = x0 + bf.leftMargin() + list_ind
+        return {"first": left + bf.textIndent(), "left": left, "right": x1 - bf.rightMargin()}
+
+    def paintEvent(self, e):
+        th = self.win.th
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        x0, x1 = self.geom()
+        ppcm = self.ppcm()
+        h = self.height()
+        page = QRectF(x0 - self.win.editor.document().documentMargin(), 3, x1 - x0 + 2 * self.win.editor.document().documentMargin(), h - 6)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(th["hover"]))
+        p.drawRoundedRect(page, 5, 5)
+        p.setBrush(QColor(th["page"]))
+        p.drawRect(QRectF(x0, 3, x1 - x0, h - 6))
+        f = QFont(self.win.ui_font)
+        f.setPixelSize(9)
+        p.setFont(f)
+        muted = QColor(th["muted"])
+        i = 0
+        while True:
+            x = x0 + i * ppcm / 4
+            if x > x1 + 0.5:
+                break
+            if i % 4 == 0:
+                if i:
+                    p.setPen(muted)
+                    p.drawText(QRectF(x - 12, 4, 24, 12), Qt.AlignmentFlag.AlignCenter, str(i // 4))
+            else:
+                p.setPen(QPen(muted, 1))
+                tick = 5 if i % 2 == 0 else 3
+                p.drawLine(QPointF(x, h / 2 - tick / 2 + 3), QPointF(x, h / 2 + tick / 2 + 3))
+            i += 1
+        acc = QColor(th["accent"])
+        mk = self.markers()
+        from PySide6.QtGui import QPolygonF
+        def tri(x, down):
+            y = 3 if down else h - 3
+            d = 7 if down else -7
+            return QPolygonF([QPointF(x - 5.5, y), QPointF(x + 5.5, y), QPointF(x, y + d)])
+        p.setPen(QPen(QColor("#FFFFFF"), 1))
+        p.setBrush(acc)
+        p.drawPolygon(tri(mk["first"], True))
+        p.drawPolygon(tri(mk["left"], False))
+        p.drawPolygon(tri(mk["right"], False))
+
+    def hit(self, x, y):
+        mk = self.markers()
+        top = y < self.height() / 2
+        order = (["first", "left", "right"] if top else ["left", "right", "first"])
+        for k in order:
+            if abs(mk[k] - x) <= 7:
+                return k
+        return None
+
+    def mousePressEvent(self, e):
+        k = self.hit(e.position().x(), e.position().y())
+        if k:
+            self._drag = k
+            self.win.editor.guide_x = None
+
+    def mouseMoveEvent(self, e):
+        x = e.position().x()
+        if not self._drag:
+            self.setCursor(Qt.CursorShape.SizeHorCursor if self.hit(x, e.position().y()) else Qt.CursorShape.ArrowCursor)
+            return
+        x0, x1 = self.geom()
+        step = self.ppcm() / 4
+        snap = not (e.modifiers() & Qt.KeyboardModifier.AltModifier)
+        if snap:
+            x = x0 + round((x - x0) / step) * step
+        x = max(x0, min(x1 - 20, x)) if self._drag != "right" else max(x0 + 40, min(x1, x))
+        bf = self.block_fmt()
+        lst = self.win.editor.textCursor().currentList()
+        list_ind = lst.format().indent() * self.win.editor.document().indentWidth() if lst is not None else 0
+        nf = QTextBlockFormat()
+        if self._drag == "left":
+            first_off = bf.textIndent()
+            nf.setLeftMargin(max(0.0, x - x0 - list_ind))
+            nf.setTextIndent(first_off)
+        elif self._drag == "first":
+            nf.setTextIndent(x - (x0 + bf.leftMargin() + list_ind))
+        else:
+            nf.setRightMargin(max(0.0, x1 - x))
+        self.win.editor.textCursor().mergeBlockFormat(nf)
+        self.win.editor.set_guide(x - self.geom()[0] + self.win.editor.document().documentMargin())
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        if self._drag:
+            self._drag = None
+            self.win.editor.set_guide(None)
+
+    def mouseDoubleClickEvent(self, e):
+        nf = QTextBlockFormat()
+        nf.setLeftMargin(0)
+        nf.setRightMargin(0)
+        nf.setTextIndent(0)
+        self.win.editor.textCursor().mergeBlockFormat(nf)
+        self.update()
+
+
+class RulerV(QWidget):
+    """Вертикальная линейка: сантиметры и границы страниц."""
+    W = 24
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.setFixedWidth(self.W)
+
+    def paintEvent(self, e):
+        th = self.win.th
+        ed = self.win.editor
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        vp_top = ed.viewport().mapTo(self.window(), QPoint(0, 0)).y() - self.mapTo(self.window(), QPoint(0, 0)).y()
+        scroll = ed.verticalScrollBar().value()
+        top = ed.document().rootFrame().frameFormat().topMargin()
+        ppcm = self.logicalDpiY() / 2.54
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(th["hover"]))
+        p.drawRoundedRect(QRectF(3, vp_top, self.width() - 6, ed.viewport().height()), 5, 5)
+        f = QFont(self.win.ui_font)
+        f.setPixelSize(9)
+        p.setFont(f)
+        muted = QColor(th["muted"])
+        p.setClipRect(QRect(0, vp_top, self.width(), ed.viewport().height()))
+        # сантиметры от начала каждой страницы
+        starts = [0.0] + [y for _, y in ed.page_breaks_y]
+        for si, start in enumerate(starts):
+            end = starts[si + 1] if si + 1 < len(starts) else ed.document().size().height()
+            base = (top if si == 0 else start)
+            i = 1
+            while True:
+                y_doc = base + i * ppcm / 2
+                if y_doc >= end - 4:
+                    break
+                y = vp_top + y_doc - scroll
+                if y > vp_top + ed.viewport().height() + 20:
+                    break
+                if y >= vp_top - 20:
+                    if i % 2 == 0:
+                        p.setPen(muted)
+                        p.drawText(QRectF(0, y - 6, self.width(), 12), Qt.AlignmentFlag.AlignCenter, str(i // 2))
+                    else:
+                        p.setPen(QPen(muted, 1))
+                        p.drawLine(QPointF(self.width() / 2 - 2, y), QPointF(self.width() / 2 + 2, y))
+                i += 1
+        # границы страниц
+        acc = QColor(th["accent"])
+        for n, y_doc in ed.page_breaks_y:
+            y = vp_top + y_doc - scroll
+            p.setPen(QPen(acc, 2))
+            p.drawLine(QPointF(4, y), QPointF(self.width() - 4, y))
+
+
 class GlassBar(QFrame):
     """Плавающая панель форматирования с живым размытием того, что под ней (как «стекло» в iOS)."""
     PAD = 10  # поля под тень
@@ -4897,6 +5304,23 @@ class Folio(QMainWindow):
         menu.addMenu(self.export_menu_ref)
         menu.addAction("Печать…", self.print_doc).setShortcut("Ctrl+P")
         menu.addSeparator()
+        self.view_actions = {}
+        vm = styled_menu(menu)
+        vm.setTitle("Вид")
+        for key, default, label in (("rulers", "true", "Линейки"),
+                                    ("page_breaks", "true", "Где заканчиваются страницы"),
+                                    ("bar_mode", "dock", "Панель над текстом (не перекрывает)")):
+            a = vm.addAction(label)
+            a.setCheckable(True)
+            if key == "bar_mode":
+                a.toggled.connect(lambda on: (self.settings.setValue("bar_mode", "dock" if on else "float"),
+                                              self.apply_theme()))
+            else:
+                a.toggled.connect(lambda on, k=key: (self.settings.setValue(k, "true" if on else "false"),
+                                                     self.apply_theme()))
+            self.view_actions[(key, default)] = a
+        menu.addMenu(vm)
+        menu.addSeparator()
         menu.addAction("Очистить форматирование", self.clear_formatting)
         menu.addAction("Вставить картинку…", self.insert_image)
         menu.addAction("Вставить таблицу…", self.insert_table)
@@ -4922,9 +5346,8 @@ class Folio(QMainWindow):
         bar = GlassBar(self)
         self.glass = bar
         pad = GlassBar.PAD
-        h = QHBoxLayout(bar)
+        h = FlowLayout(bar, hspacing=2, vspacing=4)
         h.setContentsMargins(pad + 10, pad + 1, pad + 8, pad + 5)
-        h.setSpacing(2)
 
         self.style_box = QComboBox()
         self.style_box.addItems(["Обычный текст", "Заголовок 1", "Заголовок 2", "Заголовок 3"])
@@ -5127,9 +5550,21 @@ class Folio(QMainWindow):
         area.setObjectName("EditorArea")
         self.editor_area = area
         area.installEventFilter(self)
-        h = QHBoxLayout(area)
-        h.setContentsMargins(16, 0, 16, 0)
+        v = QVBoxLayout(area)
+        v.setContentsMargins(16, 0, 16, 0)
+        v.setSpacing(0)
+        self.bar_space = QWidget()
+        self.bar_space.setFixedHeight(0)
+        v.addWidget(self.bar_space)
+        h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
+        v.addLayout(h, 1)
         h.addStretch()
+        self.page_col = QWidget()
+        self.page_col.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        grid = QGridLayout(self.page_col)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
         self.editor = Editor()
         self.editor.setObjectName("Editor")
         self.editor.setMaximumWidth(880)
@@ -5147,8 +5582,24 @@ class Folio(QMainWindow):
         self.editor.undoAvailable.connect(lambda a: self.undo_btn.setEnabled(a))
         self.editor.redoAvailable.connect(lambda a: self.redo_btn.setEnabled(a))
         self.editor.textChanged.connect(lambda: self.count_timer.start())
-        h.addWidget(self.editor, 1)
+        self.ruler_corner = QWidget()
+        self.ruler_corner.setFixedSize(RulerV.W, RulerH.H)
+        self.hruler = RulerH(self)
+        self.vruler = RulerV(self)
+        grid.addWidget(self.ruler_corner, 0, 0)
+        grid.addWidget(self.hruler, 0, 1)
+        grid.addWidget(self.vruler, 1, 0)
+        grid.addWidget(self.editor, 1, 1)
+        h.addWidget(self.page_col, 1)
         h.addStretch()
+        self.editor.cursorPositionChanged.connect(self.hruler.update)
+        self.editor.verticalScrollBar().valueChanged.connect(lambda _: self.vruler.update())
+        self.editor.viewport().installEventFilter(self)
+        self.break_timer = QTimer(self)
+        self.break_timer.setSingleShot(True)
+        self.break_timer.setInterval(500)
+        self.break_timer.timeout.connect(self.update_page_breaks)
+        self.editor.textChanged.connect(self.break_timer.start)
         self.glass.setParent(area)
         self.glass.raise_()
         self.editor.verticalScrollBar().valueChanged.connect(lambda _: (self.glass.schedule(), self.inspector.schedule()))
@@ -5237,17 +5688,92 @@ class Folio(QMainWindow):
     def eventFilter(self, obj, ev):
         if obj is getattr(self, "editor_area", None) and ev.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             self.place_glass()
+        elif hasattr(self, "editor") and obj is self.editor.viewport() and ev.type() == QEvent.Type.Resize:
+            self.break_timer.start()
+            self.hruler.update()
         return super().eventFilter(obj, ev)
+
+    def docked(self):
+        return self.settings.value("bar_mode", "dock") != "float"
 
     def place_glass(self):
         if self.inspector.isVisible():
             QTimer.singleShot(0, self.inspector.place)
         g, area = self.glass, self.editor_area
-        hint = g.sizeHint()
-        w = min(hint.width(), area.width())
-        g.setGeometry(max(0, (area.width() - w) // 2), 0, w, hint.height())
+        lay = g.layout()
+        w = max(200, min(lay.one_row_width(), area.width() - 8))
+        h = lay.heightForWidth(w)
+        g.setGeometry(max(0, (area.width() - w) // 2), 0, w, h)
         g.raise_()
+        if self.docked():
+            self.bar_space.setFixedHeight(max(0, h - GlassBar.PAD + 2))
+            self.set_doc_top(36)
+        else:
+            self.bar_space.setFixedHeight(0)
+            self.set_doc_top(h + 18)
         g.schedule()
+
+    def set_doc_top(self, top):
+        d = self.doc()
+        ff = d.rootFrame().frameFormat()
+        if abs(ff.topMargin() - top) < 1:
+            return
+        modified = d.isModified()
+        ff.setTopMargin(top)
+        d.rootFrame().setFrameFormat(ff)
+        d.setModified(modified)
+        self.break_timer.start()
+
+    def update_page_breaks(self):
+        ed = self.editor
+        if not (self.show_breaks or self.show_rulers):
+            ed.page_breaks_y = []
+        else:
+            try:
+                breaks = compute_page_breaks(self.doc())
+            except Exception:
+                breaks = []
+            lay = self.doc().documentLayout()
+            out = []
+            for n, pos in breaks:
+                block = self.doc().findBlock(pos)
+                if not block.isValid():
+                    continue
+                y = lay.blockBoundingRect(block).top()
+                bl = block.layout()
+                if bl is not None and bl.lineCount():
+                    line = bl.lineForTextPosition(pos - block.position())
+                    if line.isValid():
+                        y += line.y()
+                out.append((n, y))
+            ed.page_breaks_y = out
+        ed.viewport().update()
+        self.vruler.update()
+
+    def toggle_setting(self, key, default):
+        cur = self.settings.value(key, default) in (True, "true")
+        self.settings.setValue(key, "false" if cur else "true")
+        self.apply_theme()
+
+    def apply_toolbar_scale(self):
+        s = float(self.settings.value("toolbar_scale", 1.0))
+        for b in self.glass.findChildren(QToolButton):
+            base = b.property("base_size")
+            if base is None:
+                base = (b.width() if b.minimumWidth() == b.maximumWidth() else 36,
+                        b.height() if b.minimumHeight() == b.maximumHeight() else 36)
+                b.setProperty("base_size", base)
+            b.setFixedSize(round(base[0] * s), round(base[1] * s))
+            b.setIconSize(QSize(round(20 * s), round(20 * s)))
+        for c in self.glass.findChildren(QComboBox):
+            base = c.property("base_w")
+            if base is None:
+                base = c.width() if c.minimumWidth() == c.maximumWidth() else 120
+                c.setProperty("base_w", base)
+            c.setFixedWidth(round(base * max(0.8, s)))
+            c.setFixedHeight(round(32 * s))
+        for sep in self.glass.findChildren(QFrame, "Sep"):
+            sep.setFixedSize(1, round(22 * s))
 
     def resolve_theme(self):
         if self.theme_mode in ("light", "dark"):
@@ -5287,6 +5813,12 @@ class Folio(QMainWindow):
             QTimer.singleShot(0, self.place_glass)
         if hasattr(self, "export_menu_ref"):
             self.export_menu_ref.setIcon(make_icon(("svg", "export"), th))
+        if hasattr(self, "view_actions"):
+            for key, act in self.view_actions.items():
+                act.blockSignals(True)
+                act.setChecked(self.settings.value(key[0], key[1]) in (True, "true") if key[0] != "bar_mode"
+                               else self.docked())
+                act.blockSignals(False)
 
         # переключатель (вкл/выкл) с кружком
         tmp = Path(os.environ.get("TEMP", "/tmp"))
@@ -5313,9 +5845,17 @@ class Folio(QMainWindow):
         arrow_url = str(arrow).replace("\\", "/")
 
         st = self.settings
+        self.show_rulers = st.value("rulers", "true") in (True, "true")
+        self.show_breaks = st.value("page_breaks", "true") in (True, "true")
+        tb_s = float(st.value("toolbar_scale", 1.0))
+        tb_font = float(st.value("toolbar_font", 10))
+        tb_r = round(18 * tb_s)
         self.rf = float(st.value("ui_round", 1.0))
         ui_size = float(st.value("ui_font", 10))
         self.editor.setMaximumWidth(int(st.value("page_width", 880)))
+        for wdg in (self.hruler, self.vruler, self.ruler_corner):
+            wdg.setVisible(self.show_rulers)
+        self.page_col.setMaximumWidth(int(st.value("page_width", 880)) + (RulerV.W if self.show_rulers else 0))
         sheet = f"""
         * {{ font-family: "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif; font-size: {ui_size:g}pt; color: {th['text']}; }}
         #Root, #AppBar, #FmtWrap, #EditorArea, #StatusBar {{ background: {th['bg']}; }}
@@ -5354,6 +5894,9 @@ class Folio(QMainWindow):
                    border-top-right-radius: 18px; border-bottom: none; color: {th['doc_text']};
                    selection-background-color: {th['sel']}; selection-color: {th['doc_text']}; }}
         #GlassBar, #Inspector {{ background: transparent; border: none; }}
+        #GlassBar QToolButton {{ border-radius: {tb_r}px; }}
+        #GlassBar QComboBox, #GlassBar QFontComboBox {{ font-size: {tb_font:g}pt; }}
+        QToolButton#AddBtn {{ border-radius: {tb_r}px; }}
         QSlider::groove:horizontal {{ height: 4px; background: {th['border']}; border-radius: 2px; }}
         QSlider::sub-page:horizontal {{ background: {th['accent']}; border-radius: 2px; }}
         QSlider::handle:horizontal {{ background: #FFFFFF; border: 2px solid {th['accent']}; width: 14px; height: 14px;
@@ -5410,6 +5953,11 @@ class Folio(QMainWindow):
         sheet = re.sub(r"(radius:\s*)(\d+)px", lambda m: f"{m.group(1)}{round(int(m.group(2)) * self.rf)}px", sheet)
         self.setStyleSheet(sheet)
         self._dark_titlebar(self.theme == "dark")
+        self.apply_toolbar_scale()
+        self.hruler.update()
+        self.vruler.update()
+        QTimer.singleShot(0, self.place_glass)
+        self.break_timer.start()
 
     def _update_color_icon(self):
         th = self.th
@@ -5454,7 +6002,7 @@ class Folio(QMainWindow):
         d.setDefaultFont(f)
         d.setDocumentMargin(56)
         ff = d.rootFrame().frameFormat()
-        ff.setTopMargin(92)  # место под стеклянную панель
+        ff.setTopMargin(36 if self.docked() else max(92, self.glass.height() + 18))
         d.rootFrame().setFrameFormat(ff)
         d.modificationChanged.connect(self.update_title)
         d.setUndoRedoEnabled(False)
@@ -5463,6 +6011,9 @@ class Folio(QMainWindow):
         d.setModified(False)
         self.undo_btn.setEnabled(False)
         self.redo_btn.setEnabled(False)
+        self.editor.page_breaks_y = []
+        self.break_timer.start()
+        self.hruler.update()
 
     def apply_spacing_all(self):
         cur = QTextCursor(self.doc())
