@@ -37,7 +37,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 APP_NAME = "Folio"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 GITHUB_REPO = "Romasha22/Folio"
 DEFAULT_FONT = "Segoe UI"
 DEFAULT_SIZE = 12

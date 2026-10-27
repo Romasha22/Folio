@@ -17,6 +17,8 @@ Start-Sleep -Milliseconds 400
 if (Test-Path $app) { Remove-Item $app -Recurse -Force }
 New-Item -ItemType Directory -Path (Split-Path $app) -Force | Out-Null
 Copy-Item $Source $app -Recurse
+# файлы из интернета помечены Windows как «чужие» — снимаем метку, чтобы не было лишних предупреждений
+Get-ChildItem $app -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 
 $ws = New-Object -ComObject WScript.Shell
 $links = @(
