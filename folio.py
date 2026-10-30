@@ -37,7 +37,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 APP_NAME = "Folio"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 GITHUB_REPO = "Romasha22/Folio"
 DEFAULT_FONT = "Segoe UI"
 DEFAULT_SIZE = 12
@@ -3020,9 +3020,10 @@ def move_with_sidecar(src, dst):
 
 
 class DeadlineDialog(BaseDialog):
-    def __init__(self, parent, value=None):
+    def __init__(self, parent, value=None, title=None):
         super().__init__(parent, "Дедлайн", "Готово")
         from PySide6.QtWidgets import QDateTimeEdit
+        self.name = self.field("Что нужно сделать", title or "", "Например: выложить серию") if title is not None else None
         l = QLabel("Когда")
         l.setObjectName("Muted")
         self.lay.addWidget(l)
@@ -3038,7 +3039,7 @@ class DeadlineDialog(BaseDialog):
             self.edit.setDateTime(d)
         self.lay.addWidget(self.edit)
         self.removed = False
-        if value:
+        if value and title is None:
             rm = QPushButton("Убрать дедлайн")
             rm.setObjectName("Ghost")
             rm.clicked.connect(self._remove)
@@ -3051,6 +3052,9 @@ class DeadlineDialog(BaseDialog):
 
     def value(self):
         return self.edit.dateTime().toString(Qt.DateFormat.ISODate)
+
+    def title_text(self):
+        return self.name.text().strip() if self.name is not None else ""
 
 
 class StickerMenu(QMenu):
@@ -3093,7 +3097,7 @@ class StickerMenu(QMenu):
 
 
 class Sticker(QFrame):
-    HEADER = 30
+    HEADER = 16   # полоска сверху с ручкой для перетаскивания
     GRIP = 16
     MARGIN = 6  # место под тень
 
@@ -3111,23 +3115,8 @@ class Sticker(QFrame):
         self.hovered = False
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-        self.setMinimumSize(110, 70)
-        self.tools = QWidget(self)
-        self.tools.setObjectName("StickerTools")
-        tl = QHBoxLayout(self.tools)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.setSpacing(0)
-        for icon, tip, slot in self.tool_buttons():
-            b = QToolButton()
-            b.setFixedSize(24, 24)
-            b.setIconSize(QSize(15, 15))
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setToolTip(tip)
-            b.setProperty("icon_name", icon)
-            b.clicked.connect(slot)
-            tl.addWidget(b)
-        self.tools.adjustSize()
-        self.tools.hide()
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setMinimumSize(90, 50)
         self.chip = QPushButton(self)
         self.chip.setObjectName("DeadlineChip")
         self.chip.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3136,10 +3125,6 @@ class Sticker(QFrame):
         self.chip.hide()
 
     # ── переопределяется в наследниках ──
-    def tool_buttons(self):
-        return [("arrow", "Стрелка от этого стикера", self.start_arrow),
-                ("drop", "Цвет и прозрачность", self.color_menu), ("trash", "Удалить стикер", self.delete)]
-
     def bg(self):
         c = QColor(self.d.get("color", STICKY_COLORS[0]))
         c.setAlphaF(max(0.0, min(1.0, self.d.get("opacity", 0.95))))
@@ -3150,12 +3135,12 @@ class Sticker(QFrame):
 
     def content_rect(self):
         m = self.MARGIN
-        r = QRect(m + 12, m + self.HEADER, self.width() - 2 * m - 24, self.height() - 2 * m - self.HEADER - 12)
+        r = QRect(m + 10, m + self.HEADER, self.width() - 2 * m - 20, self.height() - 2 * m - self.HEADER - 8)
         if self.d.get("shape") == "ellipse":  # в овале текст держим ближе к центру
             dx, dy = int(self.width() * 0.11), int(self.height() * 0.08)
             r.adjust(dx, dy - 6, -dx, -dy)
         elif self.d.get("shape") == "pill":
-            dx = int(min(self.width(), self.height()) * 0.18)
+            dx = int(min(self.width(), self.height()) * 0.12)
             r.adjust(dx, 0, -dx, 0)
         return r
 
@@ -3180,10 +3165,6 @@ class Sticker(QFrame):
     # ── отрисовка ──
     def refresh_style(self):
         fg = self.fg()
-        for b in self.tools.findChildren(QToolButton):
-            b.setIcon(QIcon(svg_pixmap(SVG[b.property("icon_name")], fg, size=15)))
-            b.setStyleSheet("QToolButton{background:transparent;border:none;border-radius:12px;}"
-                            "QToolButton:hover{background:rgba(127,127,127,0.25);}")
         self.update_chip()
         self.update()
 
@@ -3244,12 +3225,27 @@ class Sticker(QFrame):
             x, y = r.right() - 5, r.bottom() - 5
             for k in (4, 8):
                 p.drawLine(QPointF(x - k, y), QPointF(x, y - k))
-        linked = self.d.get("id") in self.layer.anchors
-        if (self.hovered or linked or self._link_drag) and getattr(self.layer.win, "show_links", True):
-            acc = QColor(self.d.get("link_c") or self.layer.win.th["accent"])
+        # ручка для перетаскивания — кружок в правом верхнем углу
+        gc = self.grip_center()
+        dark_bg = luminance(self.d.get("color", "#FFFFFF")) < 0.35 if self.d.get("type") != "photo" else True
+        gcol = QColor(255, 255, 255) if dark_bg else QColor(40, 44, 56)
+        gcol.setAlpha(150 if (self.hovered or self.is_selected()) else 70)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(gcol)
+        p.drawEllipse(gc, 8, 8)
+        # кружок для новой стрелки — на правом краю, виден при наведении
+        if self.hovered or self._link_drag:
+            acc = QColor(self.layer.win.th["accent"])
             p.setPen(QPen(acc, 2))
-            p.setBrush(acc if linked or self._link_drag else QColor("#FFFFFF"))
+            p.setBrush(acc if self._link_drag else QColor("#FFFFFF"))
             p.drawEllipse(self.knob_center(), 5.5, 5.5)
+
+    def grip_center(self):
+        return QPointF(self.width() - self.MARGIN - 13, self.MARGIN + 13)
+
+    def in_move_grip(self, pos):
+        c = self.grip_center()
+        return (pos.x() - c.x()) ** 2 + (pos.y() - c.y()) ** 2 <= 11 ** 2
 
     def knob_center(self):
         return QPointF(self.width() - self.MARGIN, self.height() / 2)
@@ -3257,6 +3253,12 @@ class Sticker(QFrame):
     def in_knob(self, pos):
         c = self.knob_center()
         return (pos.x() - c.x()) ** 2 + (pos.y() - c.y()) ** 2 <= 10 ** 2
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self.delete()
+            return
+        super().keyPressEvent(e)
 
     def paint_body(self, p, r):
         p.fillPath(self.shape_path(r), self.bg())
@@ -3272,6 +3274,7 @@ class Sticker(QFrame):
     def mousePressEvent(self, e):
         self.raise_()
         self._moved = False
+        self.setFocus()
         self.layer.select(self)
         if e.button() != Qt.MouseButton.LeftButton:
             return
@@ -3283,7 +3286,7 @@ class Sticker(QFrame):
             return
         if self.in_grip(pos):
             self._resize = (g, self.d["w"], self.d["h"])
-        elif self.draggable_at(pos):
+        elif self.in_move_grip(pos) or self.draggable_at(pos):
             self._drag = (g, self.d["x"], self.d["y"])
 
     def mouseMoveEvent(self, e):
@@ -3292,6 +3295,7 @@ class Sticker(QFrame):
         if self._link_drag:
             ov = self.layer.win.links
             ov.set_temp(ov.local(self, self.knob_center().toPoint()), ov.mapFromGlobal(g))
+            self.layer.highlight_drop(ov.mapFromGlobal(g), exclude=self.d.get("id"))
             return
         if self._drag:
             g0, x0, y0 = self._drag
@@ -3319,9 +3323,13 @@ class Sticker(QFrame):
         else:
             if self.in_knob(pos):
                 self.setCursor(Qt.CursorShape.CrossCursor)
-                self.setToolTip("Потяни к строке текста — стикер будет связан с ней линией")
+                self.setToolTip("Потяни к строке текста или к другому стикеру — появится стрелка")
             elif self.in_grip(pos):
                 self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+                self.setToolTip("")
+            elif self.in_move_grip(pos):
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+                self.setToolTip("Перетащить")
             elif self.draggable_at(pos):
                 self.setCursor(Qt.CursorShape.SizeAllCursor)
             else:
@@ -3330,11 +3338,10 @@ class Sticker(QFrame):
     def mouseReleaseEvent(self, e):
         if self._link_drag:
             self._link_drag = False
-            self.layer.win.links.set_temp(None)
-            ed = self.layer.editor
-            lp = ed.viewport().mapFromGlobal(e.globalPosition().toPoint())
-            if ed.viewport().rect().contains(lp):
-                self.layer.set_link(self, ed.cursorForPosition(lp).position())
+            ov = self.layer.win.links
+            ov.set_temp(None)
+            self.layer.highlight_drop(None)
+            self.layer.finish_new_connector(self, ov.mapFromGlobal(e.globalPosition().toPoint()))
             self.update()
             return
         if self._drag or self._resize:
@@ -3358,18 +3365,13 @@ class Sticker(QFrame):
 
     def enterEvent(self, e):
         self.hovered = True
-        self.tools.show()
-        self.tools.raise_()
         self.update()
 
     def leaveEvent(self, e):
         self.hovered = False
-        self.tools.hide()
         self.update()
 
     def resizeEvent(self, e):
-        m = self.MARGIN
-        self.tools.move(self.width() - m - self.tools.width() - 6, m + 3)
         self.layout_content()
         self.update_chip()
 
@@ -3416,7 +3418,7 @@ class Sticker(QFrame):
         self.layer.remove(self)
 
     def start_arrow(self):
-        self.layer.add_arrow(from_sticker=self)
+        self.layer.add_connector(from_sticker=self)
 
     def doc_rect(self):
         m = self.MARGIN
@@ -3441,330 +3443,460 @@ ARROW_COLORS = ["#1A1D24", "#5F6368", "#E5484D", "#F76B15", "#F5B400", "#30A46C"
                 "#12A594", "#0090FF", "#3D5AFE", "#8E4EC6", "#D6409F", "#FFFFFF"]
 
 
-class ArrowSticker(QWidget):
-    """Стрелка: концы тянутся, середина изгибает линию, концы цепляются к стикерам."""
-    PAD = 26
-    HANDLE = 7
+def draw_arrow_head(p, tip, ctrl, w, col, kind):
+    """Наконечник стрелки в точке tip; ctrl — точка, откуда линия к ней приходит."""
+    import math
+    from PySide6.QtGui import QPolygonF
+    if kind == "none":
+        return
+    ang = math.atan2(tip.y() - ctrl.y(), tip.x() - ctrl.x())
+    size = 9 + w * 2.2
+    p.setPen(QPen(col, w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
 
-    def __init__(self, layer, data):
-        super().__init__(layer.viewport)
-        self.layer = layer
-        self.d = data
-        if not data.get("id"):
-            import uuid
-            data["id"] = uuid.uuid4().hex[:10]
-        data.setdefault("bend", [0, 0])
-        if "heads" in data and "head_end" not in data:  # старый формат
-            h = data.pop("heads")
-            data["head_end"] = "none" if h == "none" else "arrow"
-            data["head_start"] = "arrow" if h == "both" else "none"
-        if "dash" in data and isinstance(data["dash"], bool):
-            data["line"] = "dash" if data.pop("dash") else "solid"
-        self.hover = False
-        self._drag = None
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.menu)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-
-    # ── геометрия в координатах документа ──
-    def ends(self):
-        s1 = self.layer.by_id(self.d.get("a1"))
-        s2 = self.layer.by_id(self.d.get("a2"))
-        r1 = s1.doc_rect().center() if s1 else QPointF(self.d["x1"], self.d["y1"])
-        r2 = s2.doc_rect().center() if s2 else QPointF(self.d["x2"], self.d["y2"])
-        bx, by = self.d.get("bend", [0, 0])
-        h = QPointF((r1.x() + r2.x()) / 2 + bx, (r1.y() + r2.y()) / 2 + by)
-        p1 = border_point(s1.doc_rect(), h) if s1 else r1
-        p2 = border_point(s2.doc_rect(), h) if s2 else r2
-        h = QPointF((p1.x() + p2.x()) / 2 + bx, (p1.y() + p2.y()) / 2 + by)
-        c = QPointF(2 * h.x() - (p1.x() + p2.x()) / 2, 2 * h.y() - (p1.y() + p2.y()) / 2)
-        return p1, p2, h, c
-
-    @property
-    def selected(self):
-        return self.layer.selected is self
-
-    def kind(self):
-        return self.d.get("shape", "curve")
-
-    def elbow_points(self):
-        p1, p2, h, c = self.ends()
-        mx = (p1.x() + p2.x()) / 2 + self.d.get("bend", [0, 0])[0]
-        return [p1, QPointF(mx, p1.y()), QPointF(mx, p2.y()), p2]
-
-    def handle_point(self):
-        p1, p2, h, c = self.ends()
-        if self.kind() == "elbow":
-            pts = self.elbow_points()
-            return QPointF(pts[1].x(), (p1.y() + p2.y()) / 2)
-        return h
-
-    def doc_path(self):
-        p1, p2, h, c = self.ends()
-        path = QPainterPath(p1)
-        k = self.kind()
-        if k == "straight":
-            path.lineTo(p2)
-        elif k == "elbow":
-            for pt in self.elbow_points()[1:]:
-                path.lineTo(pt)
-        else:
-            path.quadTo(c, p2)
-        return path
-
-    def tangents(self):
-        """Точки, откуда «приходит» линия к концам — для наконечников."""
-        p1, p2, h, c = self.ends()
-        k = self.kind()
-        if k == "straight":
-            return p2, p1
-        if k == "elbow":
-            pts = self.elbow_points()
-            a = pts[1] if (pts[1] - p1).manhattanLength() > 1 else pts[2]
-            b = pts[2] if (pts[2] - p2).manhattanLength() > 1 else pts[1]
-            return a, b
-        return c, c
-
-    def to_doc(self, global_pos):
-        v = self.layer.viewport.mapFromGlobal(global_pos)
-        return QPointF(v.x(), v.y() + self.layer.scroll())
-
-    def origin(self):
-        return QPointF(self.x(), self.y() + self.layer.scroll())
-
-    def update_geometry(self):
-        p1, p2, h, c = self.ends()
-        path = self.doc_path()
-        h = self.handle_point()
-        box = path.controlPointRect().united(QRectF(h, QSizeF(1, 1))).adjusted(-self.PAD, -self.PAD, self.PAD, self.PAD)
-        self.setGeometry(int(box.x()), int(box.y() - self.layer.scroll()), int(box.width()) + 1, int(box.height()) + 1)
-        # маска: кликаются только сама линия и ручки — текст под стрелкой остаётся доступным
-        from PySide6.QtGui import QPainterPathStroker, QRegion
-        o = self.origin()
-        local = QPainterPath(path)
-        local.translate(-o.x(), -o.y())
-        st = QPainterPathStroker()
-        st.setWidth(max(16, float(self.d.get("width", 2.5)) + 14))
-        region = QRegion(st.createStroke(local).toFillPolygon().toPolygon())
-        for pt in (p1, p2):
-            region = region.united(QRegion(int(pt.x() - o.x() - 22), int(pt.y() - o.y() - 22), 44, 44,
-                                           QRegion.RegionType.Ellipse))
-        if self.selected and self.kind() != "straight":
-            region = region.united(QRegion(int(h.x() - o.x() - 12), int(h.y() - o.y() - 12), 24, 24,
-                                           QRegion.RegionType.Ellipse))
-        self.setMask(region)
-        self.update()
-
-    # ── рисование ──
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        o = self.origin()
-        p.translate(-o.x(), -o.y())
-        p1, p2, _, _ = self.ends()
-        h = self.handle_point()
-        col = QColor(self.d.get("color", "#3D5AFE"))
-        w = float(self.d.get("width", 2.5))
-        path = self.doc_path()
-        if self.selected or self.hover:  # мягкое свечение под линией
-            glow = QColor(self.layer.win.th["accent"])
-            glow.setAlpha(45)
-            p.setPen(QPen(glow, w + 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-            p.drawPath(path)
-        p.setOpacity(float(self.d.get("opacity", 1.0)))
-        style = {"dash": Qt.PenStyle.DashLine, "dot": Qt.PenStyle.DotLine}.get(self.d.get("line"), Qt.PenStyle.SolidLine)
-        p.setPen(QPen(col, w, style, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    def at(a, r):
+        return QPointF(tip.x() + r * math.cos(a), tip.y() + r * math.sin(a))
+    if kind == "dot":
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(col)
+        r = 2.5 + w * 0.9
+        p.drawEllipse(tip, r, r)
+    elif kind == "arrow":
+        p.setBrush(col)
+        p.drawPolygon(QPolygonF([tip, at(ang + math.radians(150), size), at(ang - math.radians(150), size)]))
+    elif kind == "open":
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(path)
-        t1, t2 = self.tangents()
-        self.draw_head(p, p2, t2, w, col, self.d.get("head_end", "arrow"))
-        self.draw_head(p, p1, t1, w, col, self.d.get("head_start", "none"))
-        p.setOpacity(1)
-        if self.selected:
-            acc = QColor(self.layer.win.th["accent"])
-            pts = [(p1, self.HANDLE, False), (p2, self.HANDLE, False)]
-            if self.kind() != "straight":
-                pts.append((h, self.HANDLE - 1, True))
-            for pt, r, filled in pts:
-                p.setPen(QPen(acc, 2))
-                p.setBrush(acc if filled else QColor("#FFFFFF"))
-                p.drawEllipse(pt, r, r)
+        p.drawLine(tip, at(ang + math.radians(145), size))
+        p.drawLine(tip, at(ang - math.radians(145), size))
+    elif kind == "circle":
+        p.setBrush(col)
+        r = 3 + w * 1.2
+        p.drawEllipse(at(ang + math.pi, r), r, r)
+    elif kind == "diamond":
+        p.setBrush(col)
+        r = 5 + w * 1.6
+        back = at(ang + math.pi, 2 * r)
+        mid = at(ang + math.pi, r)
+        side = QPointF(math.cos(ang + math.pi / 2) * r * 0.7, math.sin(ang + math.pi / 2) * r * 0.7)
+        p.drawPolygon(QPolygonF([tip, mid + side, back, mid - side]))
+    elif kind == "bar":
+        r = 5 + w * 1.6
+        side = QPointF(math.cos(ang + math.pi / 2) * r, math.sin(ang + math.pi / 2) * r)
+        p.drawLine(tip + side, tip - side)
 
-    @staticmethod
-    def draw_head(p, tip, ctrl, w, col, kind):
-        import math
-        from PySide6.QtGui import QPolygonF
-        if kind == "none":
-            return
-        ang = math.atan2(tip.y() - ctrl.y(), tip.x() - ctrl.x())
-        size = 9 + w * 2.2
-        p.setPen(QPen(col, w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        def at(a, r):
-            return QPointF(tip.x() + r * math.cos(a), tip.y() + r * math.sin(a))
-        if kind == "arrow":
-            p.setBrush(col)
-            p.drawPolygon(QPolygonF([tip, at(ang + math.radians(150), size), at(ang - math.radians(150), size)]))
-        elif kind == "open":
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawLine(tip, at(ang + math.radians(145), size))
-            p.drawLine(tip, at(ang - math.radians(145), size))
-        elif kind == "circle":
-            p.setBrush(col)
-            r = 3 + w * 1.2
-            p.drawEllipse(at(ang + math.pi, r), r, r)
-        elif kind == "diamond":
-            p.setBrush(col)
-            r = 5 + w * 1.6
-            back = at(ang + math.pi, 2 * r)
-            mid = at(ang + math.pi, r)
-            side = QPointF(math.cos(ang + math.pi / 2) * r * 0.7, math.sin(ang + math.pi / 2) * r * 0.7)
-            p.drawPolygon(QPolygonF([tip, mid + side, back, mid - side]))
-        elif kind == "bar":
-            r = 5 + w * 1.6
-            side = QPointF(math.cos(ang + math.pi / 2) * r, math.sin(ang + math.pi / 2) * r)
-            p.drawLine(tip + side, tip - side)
 
-    # ── мышь ──
-    def hit(self, doc_pt):
-        p1, p2, h, c = self.ends()
-        def near(a, r=11):
-            return (a.x() - doc_pt.x()) ** 2 + (a.y() - doc_pt.y()) ** 2 <= r * r
-        if near(p1):
-            return "p1"
-        if near(p2):
-            return "p2"
-        if self.selected and self.kind() != "straight" and near(self.handle_point()):
-            return "h"
-        return "line"
+class Connector:
+    """Одна стрелка на все случаи: соединяет стикеры, строки текста или свободные точки.
+    Рисуется поверх доски и страницы, поэтому спокойно переходит с одной на другую."""
 
-    def mousePressEvent(self, e):
-        if e.button() != Qt.MouseButton.LeftButton:
-            return
-        self.setFocus()
-        self.layer.select(self)
-        doc = self.to_doc(e.globalPosition().toPoint())
-        part = self.hit(doc)
-        p1, p2, h, c = self.ends()
-        self._drag = (part, doc, p1, p2, list(self.d.get("bend", [0, 0])))
+    def __init__(self, layer, d):
+        self.layer = layer
+        self.d = d
+        if not d.get("id"):
+            import uuid
+            d["id"] = uuid.uuid4().hex[:10]
+        d["type"] = "arrow"
+        if "heads" in d and "head_end" not in d:  # старый формат
+            h = d.pop("heads")
+            d["head_end"] = "none" if h == "none" else "arrow"
+            d["head_start"] = "arrow" if h == "both" else "none"
+        if isinstance(d.get("dash"), bool):
+            d["line"] = "dash" if d.pop("dash") else "solid"
+        d.setdefault("bend", [0, 0])
+        doc = layer.editor.document()
+        for k in (1, 2):
+            if d.get(f"t{k}") is not None:
+                c = QTextCursor(doc)
+                c.setPosition(max(0, min(int(d[f"t{k}"]), doc.characterCount() - 1)))
+                layer.anchors[(d["id"], k)] = c
 
-    def mouseMoveEvent(self, e):
-        doc = self.to_doc(e.globalPosition().toPoint())
-        if not self._drag:
-            part = self.hit(doc)
-            self.setCursor(Qt.CursorShape.SizeAllCursor if part in ("p1", "p2", "h", "line")
-                           else Qt.CursorShape.ArrowCursor)
-            return
-        part, start, p1, p2, bend = self._drag
-        dx, dy = doc.x() - start.x(), doc.y() - start.y()
-        if part == "p1":
-            self.d["a1"] = None
-            self.d["x1"], self.d["y1"] = doc.x(), doc.y()
-            self.layer.highlight_drop(doc, exclude=self.d.get("a2"))
-        elif part == "p2":
-            self.d["a2"] = None
-            self.d["x2"], self.d["y2"] = doc.x(), doc.y()
-            self.layer.highlight_drop(doc, exclude=self.d.get("a1"))
-        elif part == "h":
-            self.d["bend"] = [bend[0] + dx, bend[1] + (dy if self.kind() != "elbow" else 0)]
-        else:  # двигаем всю стрелку (свободные концы)
-            if not self.d.get("a1"):
-                self.d["x1"], self.d["y1"] = p1.x() + dx, p1.y() + dy
-            if not self.d.get("a2"):
-                self.d["x2"], self.d["y2"] = p2.x() + dx, p2.y() + dy
-        self.update_geometry()
+    # ── концы ──
+    def sticker(self, k):
+        return self.layer.by_id(self.d.get(f"a{k}"))
 
-    def mouseReleaseEvent(self, e):
-        if not self._drag:
-            return
-        part = self._drag[0]
-        self._drag = None
-        doc = self.to_doc(e.globalPosition().toPoint())
-        if part in ("p1", "p2"):  # отпустили конец на стикере — прицепляем
-            key, other = ("a1", "a2") if part == "p1" else ("a2", "a1")
-            target = self.layer.sticker_at(doc, exclude=self.d.get(other))
-            if target is not None:
-                self.d[key] = target.d["id"]
-            self.layer.highlight_drop(None)
-        self.update_geometry()
-        self.layer.mark()
-        self.layer.win.inspector.refresh_values()
+    def cursor(self, k):
+        return self.layer.anchors.get((self.d["id"], k))
 
-    def mouseDoubleClickEvent(self, e):
-        if self.hit(self.to_doc(e.globalPosition().toPoint())) == "h":
-            self.straighten()
+    def kind(self, k):
+        if self.sticker(k) is not None:
+            return "sticker"
+        if self.cursor(k) is not None:
+            return "text"
+        return "free"
 
-    def enterEvent(self, e):
-        self.hover = True
-        self.update()
+    def free_point(self, k):
+        ov, vp = self.layer.win.links, self.layer.viewport
+        return QPointF(ov.local(vp, QPoint(int(self.d.get(f"x{k}", 0)),
+                                         int(self.d.get(f"y{k}", 0) - self.layer.scroll()))))
 
-    def leaveEvent(self, e):
-        self.hover = False
-        self.update()
+    def set_free(self, k, ov_pt):
+        ov_pt = QPointF(ov_pt)
+        ov, vp = self.layer.win.links, self.layer.viewport
+        local = vp.mapFrom(ov.parentWidget(), (ov_pt + QPointF(ov.pos())).toPoint())
+        self.d[f"x{k}"] = local.x()
+        self.d[f"y{k}"] = local.y() + self.layer.scroll()
 
-    def keyPressEvent(self, e):
-        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            self.delete()
-            return
-        super().keyPressEvent(e)
+    def rough(self, k):
+        s = self.sticker(k)
+        if s is not None:
+            return self.layer.win.links.sticker_rect(s).center()
+        c = self.cursor(k)
+        if c is not None:
+            return self.layer.win.links.text_point(c)[0]
+        return self.free_point(k)
 
-    def select(self, on):
-        if on:
-            self.layer.select(self)
-        self.update_geometry()
+    def anchor(self, k, toward):
+        """(точка, направление выхода, обрезано ли)"""
+        s = self.sticker(k)
+        if s is not None:
+            r = self.layer.win.links.sticker_rect(s)
+            c = r.center()
+            dx, dy = toward.x() - c.x(), toward.y() - c.y()
+            other = 2 if k == 1 else 1
+            if self.kind(other) == "text" and dx > 0:  # к тексту всегда выходим с правого края
+                return QPointF(r.right() + 1, c.y()), QPointF(1, 0), False
+            if abs(dx) / max(1.0, r.width()) >= abs(dy) / max(1.0, r.height()):
+                return (QPointF(r.right() + 1, c.y()), QPointF(1, 0), False) if dx >= 0 else \
+                    (QPointF(r.left() - 1, c.y()), QPointF(-1, 0), False)
+            return (QPointF(c.x(), r.bottom() + 1), QPointF(0, 1), False) if dy >= 0 else \
+                (QPointF(c.x(), r.top() - 1), QPointF(0, -1), False)
+        cur = self.cursor(k)
+        if cur is not None:
+            pt, clipped = self.layer.win.links.text_point(cur)
+            return pt, QPointF(-1, 0), clipped
+        return self.free_point(k), QPointF(0, 0), False
 
-    # ── меню ──
-    def menu(self, pos):
-        self.layer.select(self)
-        m = styled_menu(self)
-        m.addAction("Настроить…  (панель справа)", lambda: self.layer.win.inspector.show_for(self))
-        m.addAction("Выпрямить", self.straighten)
-        m.addAction("Развернуть", self.reverse)
-        if self.d.get("a1") or self.d.get("a2"):
-            m.addAction("Отцепить от стикеров", self.detach)
-        m.addSeparator()
-        m.addAction("Удалить стрелку", self.delete)
-        m.exec(self.mapToGlobal(pos))
+    def geometry(self):
+        """Путь стрелки в координатах слоя + точки для наконечников и ручки изгиба."""
+        r1, r2 = self.rough(1), self.rough(2)
+        p1, n1, cl1 = self.anchor(1, r2)
+        p2, n2, cl2 = self.anchor(2, r1)
+        bx, by = self.d.get("bend", [0, 0])
+        shape = self.d.get("shape", "curve")
+        path = QPainterPath(p1)
+        if shape == "straight":
+            path.lineTo(p2)
+            handle = (p1 + p2) / 2
+        elif shape == "elbow":
+            mx = (p1.x() + p2.x()) / 2 + bx
+            path.lineTo(QPointF(mx, p1.y()))
+            path.lineTo(QPointF(mx, p2.y()))
+            path.lineTo(p2)
+            handle = QPointF(mx, (p1.y() + p2.y()) / 2)
+        else:
+            import math
+            dist = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
+            k = float(self.d.get("curv", 1.0)) * max(40.0, dist * 0.45)
+            c1 = p1 + n1 * k + QPointF(bx, by)
+            c2 = p2 + n2 * k + QPointF(bx, by)
+            path.cubicTo(c1, c2, p2)
+            handle = path.pointAtPercent(0.5)
+        t1 = path.pointAtPercent(0.04) if path.length() > 1 else p2
+        t2 = path.pointAtPercent(0.96) if path.length() > 1 else p1
+        return dict(p1=p1, p2=p2, path=path, handle=handle, t1=t1, t2=t2, clipped=cl1 or cl2)
+
+    # ── действия ──
+    def update(self):
+        self.layer.win.links.refresh()
 
     def set(self, key, val):
         if val is None:
             self.d.pop(key, None)
         else:
             self.d[key] = val
-        self.update_geometry()
+        self.update()
+        self.layer.mark()
+
+    def attach(self, k, ov_pt):
+        """Прицепить конец k к тому, что под точкой: стикеру, строке текста или оставить свободным."""
+        ov_pt = QPointF(ov_pt)
+        other = self.d.get(f"a{2 if k == 1 else 1}")
+        s = self.layer.sticker_at_ov(ov_pt, exclude=other)
+        self.layer.anchors.pop((self.d["id"], k), None)
+        self.d.pop(f"t{k}", None)
+        self.d[f"a{k}"] = None
+        if s is not None:
+            self.d[f"a{k}"] = s.d["id"]
+            return
+        ed = self.layer.editor
+        vp_pt = ed.viewport().mapFrom(self.layer.win.links.parentWidget(),
+                                      (ov_pt + QPointF(self.layer.win.links.pos())).toPoint())
+        if ed.viewport().rect().contains(vp_pt):
+            c = QTextCursor(ed.document())
+            c.setPosition(ed.cursorForPosition(vp_pt).position())
+            self.layer.anchors[(self.d["id"], k)] = c
+            self.d[f"t{k}"] = c.position()
+            return
+        self.set_free(k, ov_pt)
+
+    def freeze(self, k):
+        g = self.geometry()
+        self.set_free(k, g["p1"] if k == 1 else g["p2"])
+        self.d[f"a{k}"] = None
+        self.layer.anchors.pop((self.d["id"], k), None)
+        self.d.pop(f"t{k}", None)
+
+    def detach(self):
+        for k in (1, 2):
+            if self.kind(k) != "free":
+                self.freeze(k)
+        self.update()
+        self.layer.mark()
+
+    def reverse(self):
+        d = self.d
+        A = self.layer.anchors
+        i = d["id"]
+        c1, c2 = A.pop((i, 1), None), A.pop((i, 2), None)
+        if c2 is not None:
+            A[(i, 1)] = c2
+        if c1 is not None:
+            A[(i, 2)] = c1
+        for a, b in (("a1", "a2"), ("x1", "x2"), ("y1", "y2"), ("t1", "t2"), ("head_start", "head_end")):
+            d[a], d[b] = d.get(b), d.get(a)
+        for key in list(d):
+            if d[key] is None and key in ("t1", "t2", "head_start", "head_end"):
+                d.pop(key)
+        self.update()
         self.layer.mark()
 
     def straighten(self):
         self.set("bend", [0, 0])
 
-    def reverse(self):
-        p1, p2, h, c = self.ends()
-        d = self.d
-        d["a1"], d["a2"] = d.get("a2"), d.get("a1")
-        d["x1"], d["y1"], d["x2"], d["y2"] = p2.x(), p2.y(), p1.x(), p1.y()
-        self.update_geometry()
-        self.layer.mark()
-
-    def detach(self):
-        self.freeze()
-        self.d["a1"] = self.d["a2"] = None
-        self.update_geometry()
-        self.layer.mark()
-
-    def freeze(self, only=None):
-        """Запомнить текущие координаты концов (перед тем как отцепить)."""
-        p1, p2, h, c = self.ends()
-        if only in (None, self.d.get("a1")):
-            self.d["x1"], self.d["y1"] = p1.x(), p1.y()
-        if only in (None, self.d.get("a2")):
-            self.d["x2"], self.d["y2"] = p2.x(), p2.y()
-
-    def refresh_style(self):
-        self.update()
-
     def delete(self):
-        self.layer.remove(self)
+        self.layer.remove_connector(self)
+
+    def snippet(self, k):
+        s = self.sticker(k)
+        if s is not None:
+            t = {"note": "заметка", "photo": "фото", "link": "ссылка", "deadline": "дедлайн"}.get(s.d.get("type"), "стикер")
+            return t
+        c = self.cursor(k)
+        if c is not None:
+            txt = c.block().text().strip()
+            return "строка «" + ((txt[:26] + "…") if len(txt) > 27 else (txt or "пустая")) + "»"
+        return "свободный конец"
+
+
+class ConnectorHit(QWidget):
+    """Невидимый слой для мыши: ловит клики только по линиям стрелок и их ручкам."""
+    def __init__(self, win, parent):
+        super().__init__(parent)
+        self.win = win
+        self._drag = None
+        self.hover = None
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.menu)
+
+    def hit(self, pt):
+        L = self.win.stickers
+        sel = L.selected if isinstance(L.selected, Connector) else None
+        geos = self.win.links.geos
+        if sel is not None and sel.d["id"] in geos:
+            g = geos[sel.d["id"]]
+            for part, q in (("p1", g["p1"]), ("p2", g["p2"]), ("h", g["handle"])):
+                if part == "h" and sel.d.get("shape") == "straight":
+                    continue
+                if (q.x() - pt.x()) ** 2 + (q.y() - pt.y()) ** 2 <= 11 ** 2:
+                    return sel, part
+        from PySide6.QtGui import QPainterPathStroker
+        st = QPainterPathStroker()
+        for c in reversed(L.conns):
+            g = geos.get(c.d["id"])
+            if g is None:
+                continue
+            st.setWidth(max(12.0, float(c.d.get("width", 2)) + 10))
+            if st.createStroke(g["path"]).contains(pt):
+                return c, "line"
+        return None, None
+
+    def mousePressEvent(self, e):
+        pt = e.position()
+        c, part = self.hit(pt)
+        if c is None:
+            e.ignore()
+            return
+        self.setFocus()
+        self.win.stickers.select(c)
+        if e.button() == Qt.MouseButton.LeftButton:
+            g = self.win.links.geos.get(c.d["id"])
+            self._drag = (c, part, pt, list(c.d.get("bend", [0, 0])), g["p1"], g["p2"], False)
+
+    def mouseMoveEvent(self, e):
+        pt = e.position()
+        if not self._drag:
+            c, part = self.hit(pt)
+            self.setCursor(Qt.CursorShape.SizeAllCursor if part in ("p1", "p2", "h") else
+                           Qt.CursorShape.PointingHandCursor if part == "line" else Qt.CursorShape.ArrowCursor)
+            if c is not self.hover:
+                self.hover = c
+                self.win.links.refresh()
+            return
+        c, part, start, bend, p1, p2, moved = self._drag
+        dx, dy = pt.x() - start.x(), pt.y() - start.y()
+        if abs(dx) + abs(dy) > 2:
+            self._drag = (c, part, start, bend, p1, p2, True)
+        L = self.win.stickers
+        if part in ("p1", "p2"):
+            k = 1 if part == "p1" else 2
+            c.d[f"a{k}"] = None
+            L.anchors.pop((c.d["id"], k), None)
+            c.d.pop(f"t{k}", None)
+            c.set_free(k, pt)
+            L.highlight_drop(pt, exclude=c.d.get(f"a{2 if k == 1 else 1}"))
+        elif part == "h":
+            c.d["bend"] = [bend[0] + dx, bend[1] + (dy if c.d.get("shape") != "elbow" else 0)]
+        else:  # двигаем свободные концы вместе
+            if c.kind(1) == "free":
+                c.set_free(1, p1 + QPointF(dx, dy))
+            if c.kind(2) == "free":
+                c.set_free(2, p2 + QPointF(dx, dy))
+        c.update()
+
+    def mouseReleaseEvent(self, e):
+        if not self._drag:
+            return
+        c, part, start, bend, p1, p2, moved = self._drag
+        self._drag = None
+        if part in ("p1", "p2"):
+            self.win.stickers.highlight_drop(None)
+            c.attach(1 if part == "p1" else 2, e.position())
+        c.update()
+        if moved:
+            self.win.stickers.mark()
+            if self.win.inspector.item is c:
+                self.win.inspector.rebuild()
+
+    def mouseDoubleClickEvent(self, e):
+        c, part = self.hit(e.position())
+        if c is not None and part == "h":
+            c.straighten()
+
+    def keyPressEvent(self, e):
+        sel = self.win.stickers.selected
+        if isinstance(sel, Connector) and e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            sel.delete()
+            return
+        super().keyPressEvent(e)
+
+    def wheelEvent(self, e):
+        QApplication.sendEvent(self.win.editor.verticalScrollBar(), e)
+
+    def menu(self, pos):
+        c, part = self.hit(QPointF(pos))
+        if c is None:
+            return
+        self.win.stickers.select(c)
+        m = styled_menu(self)
+        m.addAction("Развернуть", c.reverse)
+        m.addAction("Выпрямить изгиб", c.straighten)
+        m.addAction("Отцепить концы", c.detach)
+        m.addSeparator()
+        m.addAction("Удалить стрелку", c.delete)
+        m.exec(self.mapToGlobal(pos))
+
+    def set_region(self, paths, handles):
+        from PySide6.QtGui import QPainterPathStroker, QRegion
+        region = QRegion()
+        st = QPainterPathStroker()
+        for path, w in paths:
+            st.setWidth(max(14.0, w + 12))
+            region = region.united(QRegion(st.createStroke(path).toFillPolygon().toPolygon()))
+        for q in handles:
+            region = region.united(QRegion(int(q.x() - 12), int(q.y() - 12), 24, 24, QRegion.RegionType.Ellipse))
+        if region.isEmpty():
+            region = QRegion(-10, -10, 1, 1)
+        if region != self.mask():
+            self.setMask(region)
+
+
+class DeadlineSticker(Sticker):
+    """Дедлайн — отдельная карточка: иконка часов, что сделать и когда."""
+    def __init__(self, layer, data):
+        super().__init__(layer, data)
+        self.setMinimumSize(170, 64)
+        self.setToolTip("Клик по часам — отметить выполненным")
+        self.refresh_style()
+
+    def draggable_at(self, pos):
+        return True
+
+    def when(self):
+        try:
+            return datetime.fromisoformat(self.d.get("deadline", ""))
+        except (TypeError, ValueError):
+            return None
+
+    def circle(self):
+        m = self.MARGIN
+        r = QRectF(self.rect()).adjusted(m, m, -m, -m)
+        return QRectF(r.left() + 12, r.center().y() - 21, 42, 42)
+
+    def paint_body(self, p, r):
+        super().paint_body(p, r)
+        th = self.layer.win.th
+        fg = QColor(self.fg())
+        d = self.when()
+        done = self.d.get("done", False)
+        state = deadline_color(d, done) if d else None
+        col = QColor(state or th["accent"])
+        circle = self.circle()
+        p.setPen(Qt.PenStyle.NoPen)
+        c2 = QColor(col)
+        c2.setAlpha(40 if luminance(self.d.get("color", "#FFF")) > 0.35 else 70)
+        p.setBrush(c2)
+        p.drawEllipse(circle)
+        icon = "check" if done else "clock"
+        p.drawPixmap(int(circle.center().x() - 13), int(circle.center().y() - 13),
+                     svg_pixmap(SVG.get(icon, SVG["clock"]), col.name(), size=26, stroke=2.1))
+        tx = circle.right() + 12
+        w = int(r.right() - tx - 28)
+        f = QFont(self.layer.win.ui_font)
+        f.setPointSizeF(10.5)
+        f.setWeight(QFont.Weight.DemiBold)
+        f.setStrikeOut(done)
+        p.setFont(f)
+        p.setPen(fg)
+        fm = QFontMetrics(f)
+        p.drawText(QRectF(tx, r.center().y() - fm.height() + 1, w, fm.height()), 0,
+                   fm.elidedText(self.d.get("title") or "Дедлайн", Qt.TextElideMode.ElideRight, w))
+        f2 = QFont(self.layer.win.ui_font)
+        f2.setPointSizeF(8.5)
+        f2.setWeight(QFont.Weight.DemiBold)
+        p.setFont(f2)
+        p.setPen(col if state else QColor(fg.red(), fg.green(), fg.blue(), 150))
+        if d is None:
+            sub = "без даты"
+        elif done:
+            sub = "сделано"
+        else:
+            left = (d - datetime.now()).total_seconds()
+            sub = deadline_text(d) + ("  ·  просрочено" if left < 0 else "  ·  меньше суток" if left < 86400 else "")
+        p.drawText(QRectF(tx, r.center().y() + 3, w, 18), 0, QFontMetrics(f2).elidedText(sub, Qt.TextElideMode.ElideRight, w))
+
+    def mouseReleaseEvent(self, e):
+        was_drag = self._moved
+        super().mouseReleaseEvent(e)
+        if not was_drag and e.button() == Qt.MouseButton.LeftButton and self.circle().contains(e.position()):
+            self.toggle_done()
+            self.update()
+            if self.layer.win.inspector.item is self:
+                self.layer.win.inspector.rebuild()
+
+    def update_chip(self):
+        self.chip.hide()
+
+    def edit_deadline(self):
+        dlg = DeadlineDialog(self.layer.win, self.d.get("deadline"), title=self.d.get("title", ""))
+        if dlg.exec() != QDialog.DialogCode.Accepted or dlg.removed:
+            return False
+        self.d["deadline"] = dlg.value()
+        self.d["title"] = dlg.title_text()
+        self.d["done"] = False
+        self.update()
+        self.layer.mark()
+        return True
 
 
 class NoteEdit(SmartEdit):
@@ -3788,17 +3920,13 @@ class NoteSticker(Sticker):
         f.setPointSizeF(11)
         self.body.document().setDefaultFont(f)
         self.body.document().setDocumentMargin(2)
+        self.body.document().setIndentWidth(18)
         if data.get("html"):
             self.body.setHtml(data["html"])
         self.body.textChanged.connect(self._text_changed)
         self.body.cursorPositionChanged.connect(lambda: layer.win.sync_toolbar() if layer.win.tgt() is self.body else None)
         self.body.currentCharFormatChanged.connect(lambda _: layer.win.sync_toolbar() if layer.win.tgt() is self.body else None)
         self.refresh_style()
-
-    def tool_buttons(self):
-        return [("clock", "Дедлайн", self.edit_deadline), ("checklist", "Список дел", self.add_checklist),
-                ("arrow", "Стрелка от этой заметки", self.start_arrow),
-                ("drop", "Цвет и прозрачность", self.color_menu), ("trash", "Удалить заметку", self.delete)]
 
     def fg(self):
         return self.d.get("text_c") or super().fg()
@@ -3814,11 +3942,14 @@ class NoteSticker(Sticker):
         r = self.content_rect()
         top = r.top()
         if self.chip.isVisible() or self.d.get("deadline"):
-            top = self.MARGIN + self.HEADER + 2
-        self.body.setGeometry(r.left() - 4, top, r.width() + 8, r.bottom() - top + 6)
+            top = self.MARGIN + 30
+        right = r.right() + 4
+        if top < self.MARGIN + 26:  # первая строка не должна залезать под ручку
+            right = min(right, int(self.grip_center().x() - 12))
+        self.body.setGeometry(r.left() - 4, top, max(20, right - r.left() + 4), r.bottom() - top + 6)
 
     def draggable_at(self, pos):
-        return pos.y() <= self.MARGIN + self.HEADER and not self.chip.geometry().contains(pos)
+        return pos.y() <= self.MARGIN + 10 and not self.chip.geometry().contains(pos)
 
     def _text_changed(self):
         self.d["html"] = self.body.toHtml()
@@ -3846,10 +3977,6 @@ class PhotoSticker(Sticker):
             pass
         self.setMinimumSize(70, 60)
         self.refresh_style()
-
-    def tool_buttons(self):
-        return [("crop", "Обрезать", self.crop), ("arrow", "Стрелка от этого фото", self.start_arrow),
-                ("drop", "Прозрачность", self.color_menu), ("trash", "Удалить фото", self.delete)]
 
     def crop_reset(self):
         ratio = self.photo_ratio()
@@ -3905,25 +4032,15 @@ class PhotoSticker(Sticker):
             p.drawImage(r, self.img, src)
         else:
             p.fillPath(path, QColor("#888"))
-        if self.hovered:  # затемнение сверху, чтобы кнопки читались
-            p.setOpacity(1)
-            from PySide6.QtGui import QLinearGradient
-            g = QLinearGradient(0, r.top(), 0, r.top() + 44)
-            g.setColorAt(0, QColor(0, 0, 0, 110))
-            g.setColorAt(1, QColor(0, 0, 0, 0))
-            p.fillRect(r, g)
         p.restore()
 
 
 class LinkSticker(Sticker):
     def __init__(self, layer, data):
         super().__init__(layer, data)
-        self.setMinimumSize(170, 84)
+        self.setMinimumSize(170, 70)
+        self.setToolTip("Двойной клик — открыть ссылку")
         self.refresh_style()
-
-    def tool_buttons(self):
-        return [("pencil", "Изменить ссылку", self.edit_link), ("arrow", "Стрелка от этой ссылки", self.start_arrow),
-                ("drop", "Цвет и прозрачность", self.color_menu), ("trash", "Удалить", self.delete)]
 
     def draggable_at(self, pos):
         return True
@@ -3945,7 +4062,7 @@ class LinkSticker(Sticker):
         p.setFont(f)
         p.setPen(fg)
         fm = QFontMetrics(f)
-        w = int(r.right() - tx - 12)
+        w = int(r.right() - tx - 28)
         p.drawText(QRectF(tx, r.center().y() - fm.height() + 1, w, fm.height()), 0,
                    fm.elidedText(self.d.get("title") or "Ссылка", Qt.TextElideMode.ElideRight, w))
         f2 = QFont(self.layer.win.ui_font)
@@ -3958,13 +4075,8 @@ class LinkSticker(Sticker):
         p.drawText(QRectF(tx, r.center().y() + 3, w, 18), 0,
                    QFontMetrics(f2).elidedText(label, Qt.TextElideMode.ElideMiddle, w))
 
-    def mouseReleaseEvent(self, e):
-        was_drag = self._moved
-        super().mouseReleaseEvent(e)
-        pos = e.position().toPoint()
-        if not was_drag and e.button() == Qt.MouseButton.LeftButton and not self.in_grip(pos) \
-                and not self.tools.geometry().contains(pos):
-            open_href(self.d.get("url", ""), self.layer.win)
+    def mouseDoubleClickEvent(self, e):
+        open_href(self.d.get("url", ""), self.layer.win)
 
     def edit_link(self):
         dlg = LinkDialog(self.layer.win, "Изменить ссылку", "Сохранить", "Название",
@@ -3978,14 +4090,16 @@ class LinkSticker(Sticker):
 
 
 class StickerLayer(QObject):
-    """Стикеры живут поверх текста, прокручиваются вместе с ним и хранятся в скрытом файле рядом с документом."""
+    """Стикеры живут на доске слева, прокручиваются вместе с текстом и хранятся в скрытом файле рядом с документом.
+    Стрелки (Connector) — отдельный список, рисуются поверх доски и страницы."""
     def __init__(self, win, editor, viewport):
         super().__init__(win)
         self.win = win
         self.editor = editor
         self.viewport = viewport
-        self.items = []
-        self.anchors = {}  # id стикера → QTextCursor (едет вместе с текстом при правках)
+        self.items = []     # стикеры
+        self.conns = []     # стрелки
+        self.anchors = {}   # (id стрелки, конец) → QTextCursor — едет вместе с текстом при правках
         self.path = None
         self.selected = None
         editor.verticalScrollBar().valueChanged.connect(lambda _: self.relayout())
@@ -4004,10 +4118,6 @@ class StickerLayer(QObject):
         return self.editor.verticalScrollBar().value()
 
     def place(self, s):
-        if isinstance(s, ArrowSticker):
-            s.update_geometry()
-            s.lower()
-            return
         vw = self.viewport.width()
         if vw >= 120:  # доска уже разложена — подгоняем стикер под её ширину
             if s.d["w"] > vw + 2 * Sticker.MARGIN - 8:
@@ -4017,76 +4127,32 @@ class StickerLayer(QObject):
                     s.d["h"] = round((s.d["w"] - 2 * Sticker.MARGIN) / ratio) + 2 * Sticker.MARGIN
             s.d["x"] = max(-Sticker.MARGIN, min(s.d["x"], vw - s.d["w"] + Sticker.MARGIN))
         s.setGeometry(int(s.d["x"]), int(s.d["y"] - self.scroll()), int(s.d["w"]), int(s.d["h"]))
-        sid = s.d.get("id")
-        for a in self.items:  # стрелки, прицепленные к этому стикеру, едут вместе с ним
-            if isinstance(a, ArrowSticker) and sid and sid in (a.d.get("a1"), a.d.get("a2")):
-                a.update_geometry()
-        self.win.links.update()
+        self.win.links.refresh()
 
     def max_y(self, h):
         sb = self.editor.verticalScrollBar()
         return max(0, sb.maximum() + self.viewport.height() - h)
 
-    def set_link(self, st, pos):
-        doc = self.editor.document()
-        pos = max(0, min(int(pos), doc.characterCount() - 1))
-        c = QTextCursor(doc)
-        c.setPosition(pos)
-        self.anchors[st.d["id"]] = c
-        st.d["link_pos"] = pos
-        st.update()
-        self.mark()
-        self.win.links.update()
-        if self.win.inspector.item is st:
-            self.win.inspector.rebuild()
-        self.win.show_toast("Стикер связан со строкой ✓")
-
-    def unlink(self, st):
-        self.anchors.pop(st.d.get("id"), None)
-        st.d.pop("link_pos", None)
-        st.update()
-        self.mark()
-        self.win.links.update()
-        if self.win.inspector.item is st:
-            self.win.inspector.rebuild()
-
-    def reveal_link(self, st):
-        cur = self.anchors.get(st.d.get("id"))
-        if cur is None:
-            return
-        c = QTextCursor(cur)
-        c.select(QTextCursor.SelectionType.LineUnderCursor)
-        self.editor.setTextCursor(c)
-        self.editor.ensureCursorVisible()
-        self.editor.setFocus()
-
     def relayout(self):
         for s in self.items:
-            if not isinstance(s, ArrowSticker):
-                self.place(s)
-        for s in self.items:
-            if isinstance(s, ArrowSticker):
-                self.place(s)
+            self.place(s)
+        self.win.links.refresh()
 
     def select(self, item):
         if item is self.selected:
-            if item is not None and not self.win.inspector.isVisible() and self.win.inspector.auto():
-                self.win.inspector.show_for(item)
             return
         old = self.selected
         self.selected = item
         for it in (old, item):
             if it is not None:
                 try:
-                    if isinstance(it, ArrowSticker):
-                        it.update_geometry()
-                    else:
-                        it.update()
+                    it.update()
                 except RuntimeError:
                     pass
+        self.win.links.refresh()
         if item is None:
             self.win.inspector.hide_panel()
-        elif self.win.inspector.auto() or self.win.inspector.isVisible():
+        else:
             self.win.inspector.show_for(item)
 
     def snap(self):
@@ -4099,7 +4165,7 @@ class StickerLayer(QObject):
         gx, gy = round((x + m) / 10) * 10 - m, round((y + m) / 10) * 10 - m
         best_x, best_y = gx, gy
         for o in self.items:
-            if o is st or isinstance(o, ArrowSticker):
+            if o is st:
                 continue
             for ox in (o.d["x"], o.d["x"] + o.d["w"] - w, o.d["x"] + (o.d["w"] - w) / 2):
                 if abs(ox - x) < 8:
@@ -4119,59 +4185,94 @@ class StickerLayer(QObject):
         else:
             self.items.insert(0, st)
             st.lower()
-            for a in self.items:
-                if isinstance(a, ArrowSticker):
-                    a.lower()
         self.mark()
 
     def by_id(self, sid):
         if not sid:
             return None
         for s in self.items:
-            if not isinstance(s, ArrowSticker) and s.d.get("id") == sid:
+            if s.d.get("id") == sid:
                 return s
         return None
 
-    def sticker_at(self, doc_pt, exclude=None):
+    def sticker_at_ov(self, ov_pt, exclude=None):
+        """Стикер под точкой слоя стрелок (только в видимой части доски)."""
+        ov = self.win.links
+        ov_pt = QPointF(ov_pt)
+        vp_rect = QRectF(QPointF(ov.local(self.viewport, QPoint(0, 0))), QSizeF(self.viewport.size()))
+        if not vp_rect.contains(ov_pt):
+            return None
         for s in reversed(self.items):
-            if isinstance(s, ArrowSticker) or s.d.get("id") == exclude:
+            if s.d.get("id") == exclude:
                 continue
-            if s.doc_rect().contains(doc_pt):
+            if ov.sticker_rect(s).adjusted(-6, -6, 6, 6).contains(ov_pt):
                 return s
         return None
 
-    def highlight_drop(self, doc_pt, exclude=None):
-        target = self.sticker_at(doc_pt, exclude) if doc_pt is not None else None
+    def highlight_drop(self, ov_pt, exclude=None):
+        target = self.sticker_at_ov(ov_pt, exclude) if ov_pt is not None else None
         for s in self.items:
-            if not isinstance(s, ArrowSticker):
-                flag = s is target
-                if getattr(s, "drop_target", False) != flag:
-                    s.drop_target = flag
-                    s.update()
+            flag = s is target
+            if getattr(s, "drop_target", False) != flag:
+                s.drop_target = flag
+                s.update()
 
-    def add_arrow(self, from_sticker=None):
+    # ── стрелки ──
+    def create_connector(self, d):
+        c = Connector(self, d)
+        self.conns.append(c)
+        return c
+
+    def add_connector(self, from_sticker=None):
         col = self.win.th["accent"]
         if from_sticker is not None:
             r = from_sticker.doc_rect()
-            x1, y1 = r.right(), r.center().y()
-            x1, y1 = r.center().x(), r.bottom()
-            x2 = r.center().x() + 30
-            d = dict(type="arrow", a1=from_sticker.d["id"], a2=None, x1=x1, y1=y1, x2=x2, y2=y1 + 120,
-                     bend=[0, -24], color=col, width=2.5, head_end="arrow", head_start="none")
+            d = dict(type="arrow", a1=from_sticker.d["id"], a2=None, x2=r.center().x(), y2=r.bottom() + 110,
+                     color=col, width=2, head_start="dot", head_end="arrow")
         else:
-            vw = self.viewport.width()
+            vw = self.viewport.width() or 300
             y = self.scroll() + 200
-            d = dict(type="arrow", a1=None, a2=None, x1=vw * 0.2, y1=y, x2=vw * 0.8, y2=y,
-                     bend=[0, -30], color=col, width=2.5, head_end="arrow", head_start="none")
-        a = self.create(d)
-        a.setFocus()
-        a.select(True)
+            d = dict(type="arrow", a1=None, a2=None, x1=vw * 0.2, y1=y, x2=vw * 0.8, y2=y + 40,
+                     color=col, width=2, head_start="none", head_end="arrow")
+        c = self.create_connector(d)
+        self.win.links.hit.setFocus()
+        self.select(c)
         self.mark()
-        return a
+        return c
 
+    def finish_new_connector(self, sticker, ov_pt):
+        """Потянули кружок с края стикера и отпустили — создаём стрелку к тому, что под курсором."""
+        ov_pt = QPointF(ov_pt)
+        start = self.win.links.sticker_rect(sticker)
+        if start.adjusted(-4, -4, 4, 4).contains(ov_pt):
+            return None  # отпустили на самом стикере — ничего не делаем
+        d = dict(type="arrow", a1=sticker.d["id"], a2=None, color=self.win.th["accent"], width=2,
+                 head_start="dot", head_end="dot")
+        c = self.create_connector(d)
+        c.attach(2, ov_pt)
+        if c.kind(2) == "free":
+            c.d["head_end"] = "arrow"
+        self.select(c)
+        self.mark()
+        if c.kind(2) == "text":
+            self.win.show_toast("Связано со строкой ✓")
+        return c
+
+    def remove_connector(self, c):
+        if c in self.conns:
+            self.conns.remove(c)
+        for k in (1, 2):
+            self.anchors.pop((c.d["id"], k), None)
+        if self.selected is c:
+            self.select(None)
+        self.win.links.refresh()
+        self.mark()
+
+    # ── загрузка / сохранение ──
     def clear(self):
         self.selected = None
         self.anchors = {}
+        self.conns = []
         if hasattr(self.win, "inspector"):
             self.win.inspector.hide_panel()
         for s in self.items:
@@ -4187,41 +4288,55 @@ class StickerLayer(QObject):
         self.clear()
         self.path = doc_path
         if doc_path:
-            for d in read_sidecar(doc_path)["stickers"]:
+            data = read_sidecar(doc_path)["stickers"]
+            for d in data:
+                if d.get("type") == "arrow":
+                    continue
                 try:
                     self.create(d)
                 except Exception:
                     continue
+            for d in data:
+                if d.get("type") != "arrow":
+                    continue
+                try:
+                    self.create_connector(d)
+                except Exception:
+                    continue
+            # старые «связи с текстом» (1.1.0) превращаем в обычные стрелки
+            for s in self.items:
+                if s.d.get("link_pos") is not None:
+                    self.create_connector(dict(type="arrow", a1=s.d["id"], t2=s.d.pop("link_pos"),
+                                               color=s.d.pop("link_c", None) or self.win.th["accent"],
+                                               width=2, head_start="dot", head_end="dot"))
+                s.d.pop("link_c", None)
             self.relayout()
 
     def create(self, d):
+        if d.get("type") == "arrow":
+            return self.create_connector(d)
         cls = {"note": NoteSticker, "photo": PhotoSticker, "link": LinkSticker,
-               "arrow": ArrowSticker}[d.get("type", "note")]
+               "deadline": DeadlineSticker}.get(d.get("type", "note"), NoteSticker)
         s = cls(self, d)
         s.show()
         self.items.append(s)
-        if d.get("link_pos") is not None and not isinstance(s, ArrowSticker):
-            doc = self.editor.document()
-            c = QTextCursor(doc)
-            c.setPosition(max(0, min(int(d["link_pos"]), doc.characterCount() - 1)))
-            self.anchors[d["id"]] = c
         self.place(s)
         self.viewport.update()
         return s
 
     def mark(self):
         self.save_timer.start()
-        self.win.glass.schedule()
 
     def save(self):
-        for s in self.items:
-            c = self.anchors.get(s.d.get("id"))
-            if c is not None:
-                s.d["link_pos"] = c.position()
+        for c in self.conns:
+            for k in (1, 2):
+                cur = self.anchors.get((c.d["id"], k))
+                if cur is not None:
+                    c.d[f"t{k}"] = cur.position()
         if not self.path:
             return
         sc = sidecar_path(self.path)
-        if not self.items:
+        if not self.items and not self.conns:
             if sc.exists():
                 try:
                     sc.unlink()
@@ -4229,7 +4344,8 @@ class StickerLayer(QObject):
                     pass
             return
         try:
-            _write_hidden(sc, json.dumps({"version": 1, "stickers": [s.d for s in self.items]}, ensure_ascii=False))
+            _write_hidden(sc, json.dumps({"version": 2, "stickers": [s.d for s in self.items] +
+                                          [c.d for c in self.conns]}, ensure_ascii=False))
         except OSError:
             pass
 
@@ -4240,7 +4356,9 @@ class StickerLayer(QObject):
     def refresh_styles(self):
         for s in self.items:
             s.refresh_style()
+        self.win.links.refresh()
 
+    # ── добавление ──
     def spot(self, w, h, pos=None):
         vw = self.viewport.width()
         if pos is not None:
@@ -4250,7 +4368,7 @@ class StickerLayer(QObject):
 
     def note_size(self):
         vw = self.viewport.width() or 300
-        return max(150, min(250, vw - 8)), 170
+        return max(150, min(240, vw - 8)), 120
 
     def add_note(self, kind="note"):
         w, h = self.note_size()
@@ -4258,17 +4376,24 @@ class StickerLayer(QObject):
         d = dict(type="note", x=x, y=y, w=w, h=h, color=STICKY_COLORS[0], opacity=0.95, html="")
         if kind == "todo":
             d["color"] = STICKY_COLORS[2]
+            d["h"] = 140
         s = self.create(d)
         s.body.setFocus()
         if kind == "todo":
             s.add_checklist()
-        if kind == "deadline":
-            d["color"] = STICKY_COLORS[1]
-            s.refresh_style()
-            if not s.edit_deadline():
-                self.remove(s)
-                return None
-            s.body.setFocus()
+        self.select(s)
+        self.mark()
+        return s
+
+    def add_deadline(self):
+        dlg = DeadlineDialog(self.win, None, title="")
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        w = self.note_size()[0]
+        x, y = self.spot(w, 80)
+        s = self.create(dict(type="deadline", x=x, y=y, w=w, h=80, color="#FFFFFF", opacity=0.97,
+                             title=dlg.title_text(), deadline=dlg.value(), done=False))
+        self.select(s)
         self.mark()
         return s
 
@@ -4312,23 +4437,17 @@ class StickerLayer(QObject):
         name, url = dlg.values()
         if not url:
             return None
-        w, h = self.note_size()[0], 96
+        w, h = self.note_size()[0], 80
         x, y = self.spot(w, h)
         s = self.create(dict(type="link", x=x, y=y, w=w, h=h, color="#FFFFFF", opacity=0.97, title=name, url=url))
         self.mark()
         return s
 
     def remove(self, s):
-        if not isinstance(s, ArrowSticker):  # прицепленные стрелки остаются на месте
-            sid = s.d.get("id")
-            for a in self.items:
-                if isinstance(a, ArrowSticker) and sid in (a.d.get("a1"), a.d.get("a2")):
-                    a.freeze(sid)
-                    if a.d.get("a1") == sid:
-                        a.d["a1"] = None
-                    if a.d.get("a2") == sid:
-                        a.d["a2"] = None
-        self.anchors.pop(s.d.get("id"), None)
+        sid = s.d.get("id")
+        for c in list(self.conns):  # стрелки, прицепленные к стикеру, уходят вместе с ним
+            if sid in (c.d.get("a1"), c.d.get("a2")):
+                self.remove_connector(c)
         if s in self.items:
             self.items.remove(s)
         if self.selected is s:
@@ -4903,7 +5022,7 @@ class BoardViewport(QWidget):
             e.acceptProposedAction()
 
     def paintEvent(self, e):
-        if any(not isinstance(s, ArrowSticker) for s in self.win.stickers.items):
+        if self.win.stickers.items:
             return
         p = QPainter(self)
         f = QFont(self.win.ui_font)
@@ -4955,20 +5074,37 @@ class Board(QWidget):
 
 
 class LinkOverlay(QWidget):
-    """Прозрачный слой поверх доски и страницы: рисует линии от стикеров к строкам текста."""
+    """Прозрачный слой поверх доски и страницы: рисует все стрелки, поэтому они переходят с доски на текст."""
     def __init__(self, win, parent):
         super().__init__(parent)
         self.win = win
         self.temp = None
+        self.geos = {}
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.hit = ConnectorHit(win, parent)
 
     def local(self, w, pt):
         """Координаты виджета w → координаты слоя (слой лежит в родителе в точке 0,0)."""
         return w.mapTo(self.parentWidget(), pt) - self.pos()
 
+    def sticker_rect(self, s):
+        m = Sticker.MARGIN
+        return QRectF(QPointF(self.local(s, QPoint(m, m))), QSizeF(s.width() - 2 * m, s.height() - 2 * m))
+
     def set_temp(self, a, b=None):
         self.temp = (a, b) if a is not None else None
+        self.refresh()
+
+    def setGeometry(self, *a):
+        super().setGeometry(*a)
+        self.hit.setGeometry(*a)
+
+    def raise_(self):
+        super().raise_()
+        self.hit.raise_()
+
+    def refresh(self):
         self.update()
 
     def text_point(self, cur):
@@ -4992,6 +5128,7 @@ class LinkOverlay(QWidget):
         win = self.win
         if not hasattr(win, "stickers"):
             return
+        L = win.stickers
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         ed, board = win.editor, win.board
@@ -4999,37 +5136,61 @@ class LinkOverlay(QWidget):
         bottom = min(self.local(board, QPoint(0, board.height())).y(), self.local(ed, QPoint(0, ed.height())).y())
         left = self.local(board, QPoint(0, 0)).x()
         right = self.local(ed, QPoint(ed.width(), 0)).x()
-        p.setClipRect(QRect(left, top, right - left, bottom - top))
+        clip = QRect(left, top, right - left, bottom - top)
+        p.setClipRect(clip)
         acc = QColor(win.th["accent"])
-        if win.show_links:
-            for s in win.stickers.items:
-                if isinstance(s, ArrowSticker):
-                    continue
-                cur = win.stickers.anchors.get(s.d.get("id"))
-                if cur is None:
-                    continue
-                a = QPointF(self.local(s, QPoint(s.width() - Sticker.MARGIN, s.height() // 2)))
-                b, clipped = self.text_point(cur)
-                if (a.y() < top - 40 and b.y() <= top + 7) or (a.y() > bottom + 40 and b.y() >= bottom - 7):
-                    continue
-                col = QColor(s.d.get("link_c") or acc)
-                col.setAlpha(140 if clipped else 220)
-                pen = QPen(col, 2, Qt.PenStyle.DashLine if clipped else Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-                p.setPen(pen)
+        self.geos = {}
+        mask_paths, handles = [], []
+        sel = L.selected if isinstance(L.selected, Connector) else None
+        hover = self.hit.hover
+        for c in (L.conns if win.show_links else [x for x in L.conns if x is sel]):
+            try:
+                g = c.geometry()
+            except Exception:
+                continue
+            br = g["path"].boundingRect().adjusted(-20, -20, 20, 20)
+            if not br.intersects(QRectF(clip)):
+                continue
+            self.geos[c.d["id"]] = g
+            w = float(c.d.get("width", 2))
+            col = QColor(c.d.get("color") or acc)
+            col.setAlphaF(max(0.1, min(1.0, float(c.d.get("opacity", 1.0)))) * (0.6 if g["clipped"] else 1.0))
+            if c is sel or c is hover:
+                glow = QColor(acc)
+                glow.setAlpha(55)
+                p.setPen(QPen(glow, w + 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawPath(self.curve(a, b))
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(col)
-                p.drawEllipse(b, 4, 4)
+                p.drawPath(g["path"])
+            style = {"dash": Qt.PenStyle.DashLine, "dot": Qt.PenStyle.DotLine}.get(c.d.get("line"), Qt.PenStyle.SolidLine)
+            if g["clipped"]:
+                style = Qt.PenStyle.DashLine
+            p.setPen(QPen(col, w, style, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(g["path"])
+            draw_arrow_head(p, g["p2"], g["t2"], w, col, c.d.get("head_end", "arrow"))
+            draw_arrow_head(p, g["p1"], g["t1"], w, col, c.d.get("head_start", "none"))
+            mask_paths.append((g["path"], w))
+            if c is sel:
+                pts = [(g["p1"], False), (g["p2"], False)]
+                if c.d.get("shape") != "straight":
+                    pts.append((g["handle"], True))
+                for q, filled in pts:
+                    p.setPen(QPen(acc, 2))
+                    p.setBrush(acc if filled else QColor("#FFFFFF"))
+                    p.drawEllipse(q, 6.5, 6.5)
+                    handles.append(q)
+            else:
+                handles += [g["p1"], g["p2"]]
         if self.temp and self.temp[1] is not None:
             a, b = self.temp
-            pen = QPen(acc, 2, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap)
-            p.setPen(pen)
+            p.setPen(QPen(acc, 2, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPath(self.curve(QPointF(a), QPointF(b)))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(acc)
             p.drawEllipse(QPointF(b), 4.5, 4.5)
+        p.end()
+        self.hit.set_region(mask_paths, [q for q in handles if clip.contains(q.toPoint())])
 
 
 class GlassBar(QFrame):
@@ -5231,7 +5392,7 @@ class CropDialog(QDialog):
 
 
 # ───────────────────────────── Панель свойств ─────────────────────────────
-HEAD_KINDS = [("Нет", "none"), ("Стрелка", "arrow"), ("Открытая", "open"), ("Круг", "circle"),
+HEAD_KINDS = [("Нет", "none"), ("Точка", "dot"), ("Стрелка", "arrow"), ("Открытая", "open"), ("Круг", "circle"),
               ("Ромб", "diamond"), ("Черта", "bar")]
 
 
@@ -5404,11 +5565,12 @@ class Inspector(GlassBar):
         lay.setContentsMargins(4, 0, 6, 8)
         lay.setSpacing(6)
         self.spin = {}
-        if isinstance(it, ArrowSticker):
+        if isinstance(it, Connector):
             self.title.setText("Стрелка")
             self.arrow_fields(lay, it)
         else:
-            self.title.setText({"note": "Заметка", "photo": "Фото", "link": "Ссылка"}.get(it.d.get("type"), "Стикер"))
+            self.title.setText({"note": "Заметка", "photo": "Фото", "link": "Ссылка",
+                                "deadline": "Дедлайн"}.get(it.d.get("type"), "Стикер"))
             self.sticker_fields(lay, it)
         lay.addStretch()
         self.scroll.setWidget(box)  # старое содержимое QScrollArea удаляет сам
@@ -5419,12 +5581,15 @@ class Inspector(GlassBar):
         win, s = self.win, self.win.settings
         text = win.doc().toPlainText()
         words = len(re.findall(r"\w+", text))
-        notes = sum(1 for x in win.stickers.items if not isinstance(x, ArrowSticker))
+        notes = len(win.stickers.items)
         pages = len(win.editor.page_breaks_y) + 1
         info = QLabel(f"{pages} стр.  ·  {words} {plural(words, 'слово', 'слова', 'слов')}  ·  "
                       f"{notes} {plural(notes, 'стикер', 'стикера', 'стикеров')}")
         info.setObjectName("Muted")
         lay.addWidget(info)
+        fmt = QLabel(f"Формат: {win.fmt.upper()}" + (f" · {win.encoding.upper()}" if win.fmt == "txt" else ""))
+        fmt.setObjectName("Muted")
+        lay.addWidget(fmt)
         self._section(lay, "ТЕМА")
         self._seg(lay, [("Светлая", "light"), ("Тёмная", "dark"), ("Авто", "system")], win.theme_mode,
                   win.set_theme_mode)
@@ -5458,28 +5623,55 @@ class Inspector(GlassBar):
 
     def arrow_fields(self, lay, a):
         d = a.d
+        info = QLabel(f"Откуда: {a.snippet(1)}\nКуда: {a.snippet(2)}")
+        info.setObjectName("Muted")
+        info.setWordWrap(True)
+        lay.addWidget(info)
         self._section(lay, "ЦВЕТ")
-        self._colors(lay, ARROW_COLORS, d.get("color"), lambda c: a.set("color", c or "#3D5AFE"))
+        self._colors(lay, ARROW_COLORS, d.get("color"), lambda c: a.set("color", c or self.win.th["accent"]))
         self._section(lay, "ПРОЗРАЧНОСТЬ")
         self._slider(lay, 10, 100, float(d.get("opacity", 1)) * 100, lambda v: a.set("opacity", v / 100), "%")
         self._section(lay, "ТОЛЩИНА")
-        self._slider(lay, 1, 14, float(d.get("width", 2.5)), lambda v: a.set("width", float(v)), " px")
+        self._slider(lay, 1, 12, float(d.get("width", 2)), lambda v: a.set("width", float(v)), " px")
         self._section(lay, "ЛИНИЯ")
         self._seg(lay, [("Сплошная", "solid"), ("Пунктир", "dash"), ("Точки", "dot")],
                   d.get("line", "solid"), lambda v: a.set("line", v))
         self._section(lay, "ФОРМА")
-        self._seg(lay, [("Дуга", "curve"), ("Прямая", "straight"), ("Ступенька", "elbow")],
+        self._seg(lay, [("Плавная", "curve"), ("Прямая", "straight"), ("Ступенька", "elbow")],
                   d.get("shape", "curve"), lambda v: a.set("shape", v))
-        self._section(lay, "НАКОНЕЧНИКИ")
+        if d.get("shape", "curve") == "curve":
+            self._section(lay, "ИЗГИБ")
+            self._slider(lay, 0, 250, float(d.get("curv", 1.0)) * 100, lambda v: a.set("curv", v / 100), "%")
+        self._section(lay, "КОНЦЫ")
         self._combo(lay, "Начало", HEAD_KINDS, d.get("head_start", "none"), lambda v: a.set("head_start", v))
         self._combo(lay, "Конец", HEAD_KINDS, d.get("head_end", "arrow"), lambda v: a.set("head_end", v))
-        lay.addSpacing(6)
-        self._buttons(lay, [("Развернуть", a.reverse), ("Выпрямить", a.straighten),
-                            ("Отцепить", a.detach), ("Удалить", a.delete)])
+        hint = QLabel("Тяни белые кружки на концах — к стикеру или строке текста. "
+                      "Синий кружок посередине сдвигает изгиб, двойной клик по нему — сброс.")
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        lay.addSpacing(4)
+        self._buttons(lay, [("Развернуть", a.reverse), ("Сбросить изгиб", a.straighten),
+                            ("Отцепить концы", a.detach), ("Удалить", a.delete)])
 
     def sticker_fields(self, lay, st):
         d = st.d
         typ = d.get("type")
+        if typ == "deadline":
+            self._section(lay, "ЧТО СДЕЛАТЬ")
+            ed = QLineEdit(d.get("title", ""))
+            ed.setPlaceholderText("Дедлайн")
+            ed.setMinimumHeight(32)
+            ed.textChanged.connect(lambda t: (d.__setitem__("title", t), st.update(), st.layer.mark()))
+            lay.addWidget(ed)
+            when = st.when()
+            dl = QLabel("Когда: " + (deadline_text(when) if when else "не указано"))
+            dl.setObjectName("Muted")
+            lay.addWidget(dl)
+            done = QCheckBox("Сделано")
+            done.setChecked(bool(d.get("done")))
+            done.toggled.connect(lambda on: (d.__setitem__("done", on), st.update(), st.layer.mark()))
+            lay.addWidget(done)
         if typ != "photo":
             self._section(lay, "ЦВЕТ")
             self._colors(lay, STICKY_COLORS, d.get("color"), lambda c: st.set("color", c or STICKY_COLORS[0]))
@@ -5520,24 +5712,6 @@ class Inspector(GlassBar):
             row.addWidget(l)
             row.addWidget(sb, 1)
         lay.addLayout(row)
-        self._section(lay, "СВЯЗЬ С ТЕКСТОМ")
-        cur = st.layer.anchors.get(d.get("id"))
-        if cur is not None:
-            snippet = cur.block().text().strip()
-            snippet = (snippet[:34] + "…") if len(snippet) > 35 else (snippet or "пустая строка")
-            info = QLabel(f"Связан со строкой: «{snippet}»")
-        else:
-            info = QLabel("Потяни кружок на правом краю стикера к нужной строке текста — или нажми кнопку ниже.")
-        info.setObjectName("Muted")
-        info.setWordWrap(True)
-        lay.addWidget(info)
-        btns = [("К строке с курсором", lambda: st.layer.set_link(st, st.layer.editor.textCursor().position()))]
-        if cur is not None:
-            btns += [("Показать строку", lambda: st.layer.reveal_link(st)), ("Отвязать", lambda: st.layer.unlink(st))]
-        self._buttons(lay, btns)
-        if cur is not None:
-            self._colors(lay, ARROW_COLORS[:8], d.get("link_c"), lambda c: (st.set("link_c", c), self.win.links.update()),
-                         allow_none=True)
         self._section(lay, "ВЫРАВНИВАНИЕ НА ДОСКЕ")
         self._buttons(lay, [("⇤ Слева", lambda: self._align(st, "left")), ("По центру", lambda: self._align(st, "center")),
                             ("Справа ⇥", lambda: self._align(st, "right")), ("Наверх экрана", lambda: self._align(st, "top")),
@@ -5545,8 +5719,8 @@ class Inspector(GlassBar):
                             ("Назад", lambda: st.layer.bring(st, False))])
         lay.addSpacing(4)
         extra = [("Стрелка отсюда", st.start_arrow)]
-        if typ == "note":
-            extra.append(("Дедлайн…", st.edit_deadline))
+        if typ == "deadline":
+            extra.append(("Изменить…", st.edit_deadline))
         if typ == "link":
             extra.append(("Изменить ссылку…", st.edit_link))
         extra.append(("Удалить", st.delete))
@@ -5584,7 +5758,7 @@ class Inspector(GlassBar):
 
     def refresh_values(self):
         it = self.item
-        if it is None or not self.isVisible() or isinstance(it, ArrowSticker):
+        if it is None or not self.isVisible() or isinstance(it, Connector):
             return
         for key, sb in self.spin.items():
             sb.blockSignals(True)
@@ -5990,10 +6164,10 @@ class Folio(QMainWindow):
         m.addSection("Стикеры — видны только в Folio")
         m.addAction(make_icon(("svg", "sticky"), th), "Заметка", lambda: self.stickers.add_note("note"))
         m.addAction(make_icon(("svg", "checklist"), th), "Заметка — список дел", lambda: self.stickers.add_note("todo"))
-        m.addAction(make_icon(("svg", "clock"), th), "Дедлайн", lambda: self.stickers.add_note("deadline"))
+        m.addAction(make_icon(("svg", "clock"), th), "Дедлайн", self.stickers.add_deadline)
         m.addAction(make_icon(("svg", "image"), th), "Фото-стикер…", self.add_photo_sticker)
         m.addAction(make_icon(("svg", "link"), th), "Ссылка-стикер…", self.stickers.add_link)
-        m.addAction(make_icon(("svg", "arrow"), th), "Стрелка", lambda: self.stickers.add_arrow())
+        m.addAction(make_icon(("svg", "arrow"), th), "Стрелка", lambda: self.stickers.add_connector())
         m.addSection("В текст документа")
         m.addAction(make_icon(("svg", "checklist"), th), "Список дел", lambda: self.toggle_list("check", True))
         m.addAction(make_icon(("svg", "image"), th), "Картинка…", self.insert_image)
@@ -6118,11 +6292,13 @@ class Folio(QMainWindow):
         g.addWidget(right_pill, 0, 2, 1, 2)
         g.addWidget(findbar, 1, 1)
         g.addWidget(self.hruler, 2, 1)
-        g.addWidget(self.board, 3, 0, 2, 1)
+        g.addWidget(self.board, 3, 0)
         g.addWidget(self.editor, 3, 1)
         g.addWidget(self.track, 3, 2)
-        g.addWidget(status, 4, 1)
-        g.addWidget(self.right_col, 2, 3, 3, 1)
+        status.setParent(body)
+        status.hide()  # счётчик слов теперь в левой верхней панели
+        self.status_bar = status
+        g.addWidget(self.right_col, 2, 3, 2, 1)
         g.setColumnStretch(1, 1)
         g.setRowStretch(3, 1)
 
@@ -6169,10 +6345,10 @@ class Folio(QMainWindow):
         m = styled_menu(self)
         m.addAction(make_icon(("svg", "sticky"), th), "Заметка", lambda: self.stickers.add_note("note"))
         m.addAction(make_icon(("svg", "checklist"), th), "Список дел", lambda: self.stickers.add_note("todo"))
-        m.addAction(make_icon(("svg", "clock"), th), "Дедлайн", lambda: self.stickers.add_note("deadline"))
+        m.addAction(make_icon(("svg", "clock"), th), "Дедлайн", self.stickers.add_deadline)
         m.addAction(make_icon(("svg", "image"), th), "Фото…", self.add_photo_sticker)
         m.addAction(make_icon(("svg", "link"), th), "Ссылка…", self.stickers.add_link)
-        m.addAction(make_icon(("svg", "arrow"), th), "Стрелка", lambda: self.stickers.add_arrow())
+        m.addAction(make_icon(("svg", "arrow"), th), "Стрелка", lambda: self.stickers.add_connector())
         m.exec(global_pos)
 
     def show_export_menu(self):
@@ -6469,6 +6645,7 @@ class Folio(QMainWindow):
                       font-size: 11pt; }}
         #DocTitle {{ font-size: 12pt; font-weight: 600; }}
         #DocSub, #Muted {{ color: {th['muted']}; font-size: 9pt; }}
+        #DocSub[toast="true"] {{ color: {th['accent']}; font-weight: 600; }}
         #Toast {{ color: {th['accent']}; font-size: 9pt; font-weight: 600; }}
         #Chip {{ background: {th['surface']}; border: 1px solid {th['border']}; border-radius: 11px;
                  padding: 2px 10px; color: {th['muted']}; font-size: 8.5pt; font-weight: 600; }}
@@ -6675,11 +6852,16 @@ class Folio(QMainWindow):
                 sub = str(parent)
         else:
             sub = "Новый документ"
-        # длинные названия аккуратно обрезаем «…», чтобы влезли в левую панель
-        for lab, text in ((self.title_label, name + ("  •" if dirty else "")), (self.sub_label, sub)):
+        # под названием — сколько слов; на пару секунд там же появляются сообщения («Сохранено ✓»)
+        toast = getattr(self, "_toast_text", "")
+        line2 = toast or getattr(self, "count_text", "")
+        self.sub_label.setProperty("toast", bool(toast))
+        self._repolish(self.sub_label)
+        for lab, text in ((self.title_label, name + ("  •" if dirty else "")), (self.sub_label, line2)):
             w = max(40, lab.width() - 2)
             lab.setText(lab.fontMetrics().elidedText(text, Qt.TextElideMode.ElideMiddle, w))
-            lab.setToolTip(text)
+        self.title_label.setToolTip(f"{name}\n{sub}")
+        self.sub_label.setToolTip(sub)
         self.setWindowTitle(f"{'• ' if dirty else ''}{name} — {APP_NAME}")
         self.format_chip.setText(self.fmt.upper() + (f" · {self.encoding.upper()}" if self.fmt == "txt" else ""))
 
@@ -7064,6 +7246,14 @@ class Folio(QMainWindow):
     def show_toast(self, text):
         self.toast.setText(text)
         self.toast_timer.start(2200)
+        self._toast_text = text
+        self.update_title()
+        QTimer.singleShot(2300, self._clear_toast)
+
+    def _clear_toast(self):
+        if not self.toast_timer.isActive():
+            self._toast_text = ""
+            self.update_title()
 
     def update_counts(self):
         text = self.doc().toPlainText()
@@ -7078,6 +7268,8 @@ class Folio(QMainWindow):
             return many
         self.count_label.setText(f"{words} {plural(words, 'слово', 'слова', 'слов')}  ·  "
                                  f"{chars} {plural(chars, 'символ', 'символа', 'символов')}")
+        self.count_text = f"{words} {plural(words, 'слово', 'слова', 'слов')} · {chars} {plural(chars, 'символ', 'символа', 'символов')}"
+        self.update_title()
 
     # ── Форматирование ──
     # ── Куда применять форматирование: основной текст или заметка в фокусе ──
