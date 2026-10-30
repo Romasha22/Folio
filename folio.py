@@ -37,7 +37,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 APP_NAME = "Folio"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"
 GITHUB_REPO = "Romasha22/Folio"
 DEFAULT_FONT = "Segoe UI"
 DEFAULT_SIZE = 12
@@ -2107,66 +2107,74 @@ class BrowserPage(QWidget):
 
         bar = QWidget()
         bar.setObjectName("AppBar")
-        bar.setFixedHeight(64)
         h = QHBoxLayout(bar)
-        h.setContentsMargins(16, 10, 16, 6)
-        h.setSpacing(4)
+        h.setContentsMargins(16, 12, 16, 4)
+        h.setSpacing(0)
+        # слева: путь + круглая кнопка «+»
+        left = GlassBar(win)
+        lh = QHBoxLayout(left)
+        lh.setContentsMargins(8, 5, 6, 5)
+        lh.setSpacing(2)
         logo = QLabel()
-        logo.setFixedSize(36, 36)
-        logo.setPixmap(app_icon().pixmap(32, 32))
+        logo.setFixedSize(32, 32)
+        logo.setPixmap(app_icon().pixmap(28, 28))
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        h.addWidget(logo)
-        h.addSpacing(8)
+        lh.addWidget(logo)
+        lh.addSpacing(4)
         self.crumbs = QHBoxLayout()
         self.crumbs.setSpacing(0)
-        h.addLayout(self.crumbs)
-        h.addStretch()
-        h.addWidget(win._btn("Открыть файл с компьютера  (Ctrl+O)", ("svg", "open"), win.open_dialog))
-        self.theme_btn = win._btn("Тёмная / светлая тема", ("svg", "moon"), win.toggle_theme)
-        h.addWidget(self.theme_btn)
-        h.addWidget(win._btn("Внешний вид: цвета, страница, шрифт", ("svg", "tune"), win.open_settings))
-        h.addSpacing(8)
-        self.update_btn = QPushButton("Обновить")
-        self.update_btn.setObjectName("Ghost")
-        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_btn.hide()
-        self.update_btn.clicked.connect(lambda: win.updater.ask_install())
-        h.addWidget(self.update_btn)
-        h.addSpacing(6)
-        self.create_btn = QPushButton("  Создать")
-        self.create_btn.setObjectName("Pill")
+        lh.addLayout(self.crumbs)
+        lh.addSpacing(6)
+        self.create_btn = QToolButton()
+        self.create_btn.setObjectName("AddBtn")
+        self.create_btn.setFixedSize(36, 36)
+        self.create_btn.setIconSize(QSize(18, 18))
         self.create_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.create_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.create_btn.clicked.connect(self.show_create_menu)
-        h.addWidget(self.create_btn)
-        v.addWidget(bar)
-
-        body = QWidget()
-        body.setObjectName("EditorArea")
-        bl = QVBoxLayout(body)
-        bl.setContentsMargins(24, 8, 24, 0)
-        hrow = QHBoxLayout()
-        self.heading = QLabel()
-        self.heading.setObjectName("PageHeading")
+        lh.addWidget(self.create_btn)
+        h.addWidget(left)
+        h.addStretch()
+        # справа: сообщения, обновление и настройки
+        right = GlassBar(win)
+        rh = QHBoxLayout(right)
+        rh.setContentsMargins(12, 5, 6, 5)
+        rh.setSpacing(2)
         self.toast = QLabel("")
         self.toast.setObjectName("Toast")
         self.toast_timer = QTimer(self)
         self.toast_timer.setSingleShot(True)
         self.toast_timer.timeout.connect(lambda: self.toast.setText(""))
-        hrow.addWidget(self.heading)
-        hrow.addStretch()
-        hrow.addWidget(self.toast)
-        bl.addLayout(hrow)
-        bl.addSpacing(6)
+        rh.addWidget(self.toast)
+        self.update_btn = QPushButton("Обновить")
+        self.update_btn.setObjectName("Ghost")
+        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_btn.hide()
+        self.update_btn.clicked.connect(lambda: win.updater.ask_install())
+        rh.addWidget(self.update_btn)
+        rh.addWidget(win._btn("Открыть файл с компьютера  (Ctrl+O)", ("svg", "open"), win.open_dialog))
+        self.theme_btn = win._btn("Тёмная / светлая тема", ("svg", "moon"), win.toggle_theme)
+        rh.addWidget(self.theme_btn)
+        rh.addWidget(win._btn("Настройки: цвета, фон окна, шрифты", ("svg", "tune"), win.open_settings))
+        h.addWidget(right)
+        v.addWidget(bar)
+
+        body = QWidget()
+        body.setObjectName("EditorArea")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(9, 10, 9, 0)
+        self.heading = QLabel()  # заголовок теперь в «пути» сверху
         self.grid = Grid(self)
         self.grid.setItemDelegate(CardDelegate(win))
         self.grid.itemDoubleClicked.connect(self.open_item)
         self.grid.customContextMenuRequested.connect(self.context_menu)
         bl.addWidget(self.grid, 1)
         self.empty = QLabel()
-        self.empty.setObjectName("Empty")
+        self.empty.setObjectName("EmptyPill")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
-        bl.addWidget(self.empty, 1)
+        self.empty.setMaximumWidth(560)
+        bl.addWidget(self.empty, 1, Qt.AlignmentFlag.AlignCenter)
         v.addWidget(body, 1)
 
         self.watcher = QFileSystemWatcher(self)
@@ -2226,7 +2234,7 @@ class BrowserPage(QWidget):
                 b = CrumbButton("Проекты" if c == self.root else c.name, c, self, current=(c == self.cwd))
             self.crumbs.addWidget(b)
         self.heading.setText("Мои проекты" if self.at_root() else self.cwd.name)
-        self.create_btn.setText("  Новый проект" if self.at_root() else "  Создать")
+        self.create_btn.setToolTip("Новый проект" if self.at_root() else "Создать: документ, папку, ссылку")
 
     def refresh(self):
         selected = {i.data(Qt.ItemDataRole.UserRole)["path"] for i in self.grid.selectedItems()}
@@ -2590,7 +2598,7 @@ class SettingsDialog(QDialog):
         self.tint.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tint.toggled.connect(self.set_tint)
         lay.addWidget(self.tint)
-        self.glass = QCheckBox("Стеклянная панель инструментов (размытие, как в iPhone)")
+        self.glass = QCheckBox("Размытие фона под панелями (стекло, как в iPhone)")
         self.glass.setCursor(Qt.CursorShape.PointingHandCursor)
         self.glass.toggled.connect(self.set_glass)
         lay.addWidget(self.glass)
@@ -2634,30 +2642,33 @@ class SettingsDialog(QDialog):
         self.sl_font = slider_row("Размер шрифта меню", 8, 13, float(self.s.value("ui_font", 10)), "ui_font", 1, " pt")
         self.sl_page = slider_row("Ширина страницы", 600, 1400, float(self.s.value("page_width", 880)),
                                   "page_width", 1, " px")
-        self.sl_tint = slider_row("Стекло: плотность", 5, 90, float(self.s.value("glass_tint", 0.40)) * 100,
+        self.sl_board = slider_row("Ширина доски заметок", 180, 520, float(self.s.value("board_width", 300)),
+                                   "board_width", 1, " px")
+        self.sl_tint = slider_row("Плотность панелей", 5, 100, panel_alpha(self.win) * 100,
                                   "glass_tint", 0.01, "%")
-        self.sl_blur = slider_row("Стекло: размытие", 2, 30, float(self.s.value("glass_blur", 12)), "glass_blur", 1)
+        self.sl_blur = slider_row("Размытие под панелями", 2, 30, float(self.s.value("glass_blur", 12)), "glass_blur", 1)
         self.sl_tbs = slider_row("Размер панели текста", 70, 150, float(self.s.value("toolbar_scale", 1.0)) * 100,
                                  "toolbar_scale", 0.01, "%")
         self.sl_tbf = slider_row("Шрифт на панели текста", 7, 13, float(self.s.value("toolbar_font", 10)),
                                  "toolbar_font", 1, " pt")
-        bar_row = QHBoxLayout()
-        bl = QLabel("Панель текста")
-        bl.setFixedWidth(170)
-        bar_row.addWidget(bl)
-        self.bar_btns = {}
-        for key, label in (("dock", "Над текстом"), ("float", "Поверх текста (стекло)")):
+        wall_row = QHBoxLayout()
+        wl = QLabel("Фон окна")
+        wl.setFixedWidth(170)
+        wall_row.addWidget(wl)
+        cur_wall = self.s.value("wallpaper", "gradient")
+        for key, label in (("none", "Без фона"), ("gradient", "Градиент"), ("photo", "Своё фото…")):
             b = QPushButton(label)
             b.setObjectName("Seg")
             b.setCheckable(True)
             b.setAutoExclusive(True)
-            b.setChecked(self.s.value("bar_mode", "dock") == key)
-            b.clicked.connect(lambda _=False, k=key: (self.s.setValue("bar_mode", k), self.win.apply_theme()))
-            bar_row.addWidget(b)
-        bar_row.addStretch()
-        lay.addLayout(bar_row)
-        for key, label in (("rulers", "Линейки (отступы абзаца — тяни бегунки)"),
-                           ("page_breaks", "Показывать, где заканчиваются страницы (для печати и PDF)")):
+            b.setChecked(key == cur_wall or (key == "photo" and cur_wall not in ("none", "gradient")))
+            b.clicked.connect(lambda _=False, k=key: self.win.set_wallpaper_mode(k))
+            wall_row.addWidget(b)
+        wall_row.addStretch()
+        lay.addLayout(wall_row)
+        for key, label in (("rulers", "Линейка отступов (тяни бегунки)"),
+                           ("page_breaks", "Показывать, где заканчиваются страницы (для печати и PDF)"),
+                           ("links", "Линии от стикеров к строкам текста")):
             cb = QCheckBox(label)
             cb.setChecked(self.s.value(key, "true") in (True, "true"))
             cb.toggled.connect(lambda on, k=key: (self.s.setValue(k, "true" if on else "false"), self.win.apply_theme()))
@@ -2845,8 +2856,8 @@ class SettingsDialog(QDialog):
 
     SETTINGS_KEYS = ("theme", "accent", "tint", "glass", "glass_tint", "glass_blur", "page_light", "page_dark",
                      "text_light", "text_dark", "doc_font", "doc_size", "ui_round", "ui_font", "page_width",
-                     "snap", "inspector_auto", "recent_colors", "toolbar_scale", "toolbar_font", "bar_mode",
-                     "rulers", "page_breaks")
+                     "snap", "inspector_auto", "recent_colors", "toolbar_scale", "toolbar_font",
+                     "rulers", "page_breaks", "links", "wallpaper", "board_width", "doc_panel_open")
 
     def export_settings(self):
         path, _ = QFileDialog.getSaveFileName(self, "Сохранить настройки", str(Path.home() / "Documents" / "Folio-настройки.json"),
@@ -2924,7 +2935,7 @@ class SettingsDialog(QDialog):
         self.win.apply_theme()
 
     def reset_all(self):
-        for k in ("toolbar_scale", "toolbar_font", "bar_mode", "rulers", "page_breaks", "ui_round", "ui_font", "page_width", "glass_tint", "glass_blur", "snap", "inspector_auto",
+        for k in ("toolbar_scale", "toolbar_font", "links", "wallpaper", "board_width", "rulers", "page_breaks", "ui_round", "ui_font", "page_width", "glass_tint", "glass_blur", "snap", "inspector_auto",
                   "accent", "tint", "glass", "page_light", "page_dark", "text_light", "text_dark", "doc_font", "doc_size"):
             self.s.remove(k)
         self.font.blockSignals(True)
@@ -3096,6 +3107,7 @@ class Sticker(QFrame):
         self._drag = None
         self._resize = None
         self._moved = False
+        self._link_drag = False
         self.hovered = False
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
@@ -3232,6 +3244,19 @@ class Sticker(QFrame):
             x, y = r.right() - 5, r.bottom() - 5
             for k in (4, 8):
                 p.drawLine(QPointF(x - k, y), QPointF(x, y - k))
+        linked = self.d.get("id") in self.layer.anchors
+        if (self.hovered or linked or self._link_drag) and getattr(self.layer.win, "show_links", True):
+            acc = QColor(self.d.get("link_c") or self.layer.win.th["accent"])
+            p.setPen(QPen(acc, 2))
+            p.setBrush(acc if linked or self._link_drag else QColor("#FFFFFF"))
+            p.drawEllipse(self.knob_center(), 5.5, 5.5)
+
+    def knob_center(self):
+        return QPointF(self.width() - self.MARGIN, self.height() / 2)
+
+    def in_knob(self, pos):
+        c = self.knob_center()
+        return (pos.x() - c.x()) ** 2 + (pos.y() - c.y()) ** 2 <= 10 ** 2
 
     def paint_body(self, p, r):
         p.fillPath(self.shape_path(r), self.bg())
@@ -3252,6 +3277,10 @@ class Sticker(QFrame):
             return
         pos = e.position().toPoint()
         g = e.globalPosition().toPoint()
+        if self.in_knob(pos):
+            self._link_drag = True
+            self._moved = True
+            return
         if self.in_grip(pos):
             self._resize = (g, self.d["w"], self.d["h"])
         elif self.draggable_at(pos):
@@ -3260,6 +3289,10 @@ class Sticker(QFrame):
     def mouseMoveEvent(self, e):
         pos = e.position().toPoint()
         g = e.globalPosition().toPoint()
+        if self._link_drag:
+            ov = self.layer.win.links
+            ov.set_temp(ov.local(self, self.knob_center().toPoint()), ov.mapFromGlobal(g))
+            return
         if self._drag:
             g0, x0, y0 = self._drag
             dx, dy = g.x() - g0.x(), g.y() - g0.y()
@@ -3270,7 +3303,7 @@ class Sticker(QFrame):
             if self.layer.snap():
                 x, y = self.layer.snap_xy(self, x, y)
             self.d["x"] = max(-self.MARGIN, min(vw - 60, x))
-            self.d["y"] = max(0, y)
+            self.d["y"] = max(0, min(y, self.layer.max_y(self.d["h"])))
             self.layer.place(self)
         elif self._resize:
             g0, w0, h0 = self._resize
@@ -3284,7 +3317,10 @@ class Sticker(QFrame):
             self._moved = True
             self.layer.place(self)
         else:
-            if self.in_grip(pos):
+            if self.in_knob(pos):
+                self.setCursor(Qt.CursorShape.CrossCursor)
+                self.setToolTip("Потяни к строке текста — стикер будет связан с ней линией")
+            elif self.in_grip(pos):
                 self.setCursor(Qt.CursorShape.SizeFDiagCursor)
             elif self.draggable_at(pos):
                 self.setCursor(Qt.CursorShape.SizeAllCursor)
@@ -3292,6 +3328,15 @@ class Sticker(QFrame):
                 self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, e):
+        if self._link_drag:
+            self._link_drag = False
+            self.layer.win.links.set_temp(None)
+            ed = self.layer.editor
+            lp = ed.viewport().mapFromGlobal(e.globalPosition().toPoint())
+            if ed.viewport().rect().contains(lp):
+                self.layer.set_link(self, ed.cursorForPosition(lp).position())
+            self.update()
+            return
         if self._drag or self._resize:
             self._drag = self._resize = None
             if self._moved:
@@ -3934,12 +3979,13 @@ class LinkSticker(Sticker):
 
 class StickerLayer(QObject):
     """Стикеры живут поверх текста, прокручиваются вместе с ним и хранятся в скрытом файле рядом с документом."""
-    def __init__(self, win, editor):
+    def __init__(self, win, editor, viewport):
         super().__init__(win)
         self.win = win
         self.editor = editor
-        self.viewport = editor.viewport()
+        self.viewport = viewport
         self.items = []
+        self.anchors = {}  # id стикера → QTextCursor (едет вместе с текстом при правках)
         self.path = None
         self.selected = None
         editor.verticalScrollBar().valueChanged.connect(lambda _: self.relayout())
@@ -3963,13 +4009,56 @@ class StickerLayer(QObject):
             s.lower()
             return
         vw = self.viewport.width()
-        s.d["x"] = max(-Sticker.MARGIN, min(s.d["x"], vw - min(s.d["w"], vw) + Sticker.MARGIN))
+        if vw >= 120:  # доска уже разложена — подгоняем стикер под её ширину
+            if s.d["w"] > vw + 2 * Sticker.MARGIN - 8:
+                ratio = s.photo_ratio() if hasattr(s, "photo_ratio") else None
+                s.d["w"] = vw + 2 * Sticker.MARGIN - 8
+                if ratio:
+                    s.d["h"] = round((s.d["w"] - 2 * Sticker.MARGIN) / ratio) + 2 * Sticker.MARGIN
+            s.d["x"] = max(-Sticker.MARGIN, min(s.d["x"], vw - s.d["w"] + Sticker.MARGIN))
         s.setGeometry(int(s.d["x"]), int(s.d["y"] - self.scroll()), int(s.d["w"]), int(s.d["h"]))
         sid = s.d.get("id")
         for a in self.items:  # стрелки, прицепленные к этому стикеру, едут вместе с ним
             if isinstance(a, ArrowSticker) and sid and sid in (a.d.get("a1"), a.d.get("a2")):
                 a.update_geometry()
-        self.win.glass.schedule()
+        self.win.links.update()
+
+    def max_y(self, h):
+        sb = self.editor.verticalScrollBar()
+        return max(0, sb.maximum() + self.viewport.height() - h)
+
+    def set_link(self, st, pos):
+        doc = self.editor.document()
+        pos = max(0, min(int(pos), doc.characterCount() - 1))
+        c = QTextCursor(doc)
+        c.setPosition(pos)
+        self.anchors[st.d["id"]] = c
+        st.d["link_pos"] = pos
+        st.update()
+        self.mark()
+        self.win.links.update()
+        if self.win.inspector.item is st:
+            self.win.inspector.rebuild()
+        self.win.show_toast("Стикер связан со строкой ✓")
+
+    def unlink(self, st):
+        self.anchors.pop(st.d.get("id"), None)
+        st.d.pop("link_pos", None)
+        st.update()
+        self.mark()
+        self.win.links.update()
+        if self.win.inspector.item is st:
+            self.win.inspector.rebuild()
+
+    def reveal_link(self, st):
+        cur = self.anchors.get(st.d.get("id"))
+        if cur is None:
+            return
+        c = QTextCursor(cur)
+        c.select(QTextCursor.SelectionType.LineUnderCursor)
+        self.editor.setTextCursor(c)
+        self.editor.ensureCursorVisible()
+        self.editor.setFocus()
 
     def relayout(self):
         for s in self.items:
@@ -4065,15 +4154,14 @@ class StickerLayer(QObject):
         if from_sticker is not None:
             r = from_sticker.doc_rect()
             x1, y1 = r.right(), r.center().y()
-            x2 = min(self.viewport.width() - 30, r.right() + 170)
-            if x2 - x1 < 80:
-                x2 = max(30, r.left() - 170)
-            d = dict(type="arrow", a1=from_sticker.d["id"], a2=None, x1=x1, y1=y1, x2=x2, y2=y1 + 30,
+            x1, y1 = r.center().x(), r.bottom()
+            x2 = r.center().x() + 30
+            d = dict(type="arrow", a1=from_sticker.d["id"], a2=None, x1=x1, y1=y1, x2=x2, y2=y1 + 120,
                      bend=[0, -24], color=col, width=2.5, head_end="arrow", head_start="none")
         else:
             vw = self.viewport.width()
-            y = self.scroll() + 260
-            d = dict(type="arrow", a1=None, a2=None, x1=vw * 0.3, y1=y, x2=vw * 0.62, y2=y,
+            y = self.scroll() + 200
+            d = dict(type="arrow", a1=None, a2=None, x1=vw * 0.2, y1=y, x2=vw * 0.8, y2=y,
                      bend=[0, -30], color=col, width=2.5, head_end="arrow", head_start="none")
         a = self.create(d)
         a.setFocus()
@@ -4083,6 +4171,7 @@ class StickerLayer(QObject):
 
     def clear(self):
         self.selected = None
+        self.anchors = {}
         if hasattr(self.win, "inspector"):
             self.win.inspector.hide_panel()
         for s in self.items:
@@ -4111,7 +4200,13 @@ class StickerLayer(QObject):
         s = cls(self, d)
         s.show()
         self.items.append(s)
+        if d.get("link_pos") is not None and not isinstance(s, ArrowSticker):
+            doc = self.editor.document()
+            c = QTextCursor(doc)
+            c.setPosition(max(0, min(int(d["link_pos"]), doc.characterCount() - 1)))
+            self.anchors[d["id"]] = c
         self.place(s)
+        self.viewport.update()
         return s
 
     def mark(self):
@@ -4119,6 +4214,10 @@ class StickerLayer(QObject):
         self.win.glass.schedule()
 
     def save(self):
+        for s in self.items:
+            c = self.anchors.get(s.d.get("id"))
+            if c is not None:
+                s.d["link_pos"] = c.position()
         if not self.path:
             return
         sc = sidecar_path(self.path)
@@ -4147,10 +4246,14 @@ class StickerLayer(QObject):
         if pos is not None:
             return max(0, min(pos.x() - w // 2, vw - w)), max(0, pos.y() + self.scroll() - 20)
         n = len(self.items) % 5
-        return max(0, vw - w - 24 - 18 * n), self.scroll() + 96 + 26 * n
+        return max(0, min(6 + 14 * n, vw - w)), self.scroll() + 52 + 26 * n
+
+    def note_size(self):
+        vw = self.viewport.width() or 300
+        return max(150, min(250, vw - 8)), 170
 
     def add_note(self, kind="note"):
-        w, h = 250, 210
+        w, h = self.note_size()
         x, y = self.spot(w, h)
         d = dict(type="note", x=x, y=y, w=w, h=h, color=STICKY_COLORS[0], opacity=0.95, html="")
         if kind == "todo":
@@ -4191,7 +4294,7 @@ class StickerLayer(QObject):
             img.save(buf, "JPG", 88)
             raw = bytes(buf.data())
         ratio = img.width() / max(1, img.height())
-        w = 260
+        w = self.note_size()[0]
         h = round((w - 2 * Sticker.MARGIN) / ratio) + 2 * Sticker.MARGIN
         x, y = self.spot(w, h, pos)
         d = dict(type="photo", x=x, y=y, w=w, h=h, ratio=ratio, opacity=1.0, image=base64.b64encode(raw).decode())
@@ -4209,7 +4312,7 @@ class StickerLayer(QObject):
         name, url = dlg.values()
         if not url:
             return None
-        w, h = 250, 96
+        w, h = self.note_size()[0], 96
         x, y = self.spot(w, h)
         s = self.create(dict(type="link", x=x, y=y, w=w, h=h, color="#FFFFFF", opacity=0.97, title=name, url=url))
         self.mark()
@@ -4225,6 +4328,7 @@ class StickerLayer(QObject):
                         a.d["a1"] = None
                     if a.d.get("a2") == sid:
                         a.d["a2"] = None
+        self.anchors.pop(s.d.get("id"), None)
         if s in self.items:
             self.items.remove(s)
         if self.selected is s:
@@ -4235,6 +4339,7 @@ class StickerLayer(QObject):
         s.setParent(None)
         s.deleteLater()
         self.relayout()
+        self.viewport.update()
         self.mark()
 
 
@@ -4393,12 +4498,13 @@ class RulerH(QWidget):
         x0, x1 = self.geom()
         ppcm = self.ppcm()
         h = self.height()
-        page = QRectF(x0 - self.win.editor.document().documentMargin(), 3, x1 - x0 + 2 * self.win.editor.document().documentMargin(), h - 6)
+        rr = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        paint_pane(self, p, rr, rr.height() / 2, self.win)
+        track = QColor(th["text"])
+        track.setAlpha(28)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(th["hover"]))
-        p.drawRoundedRect(page, 5, 5)
-        p.setBrush(QColor(th["page"]))
-        p.drawRect(QRectF(x0, 3, x1 - x0, h - 6))
+        p.setBrush(track)
+        p.drawRoundedRect(QRectF(x0, h / 2 + 1, x1 - x0, 3), 1.5, 1.5)
         f = QFont(self.win.ui_font)
         f.setPixelSize(9)
         p.setFont(f)
@@ -4541,94 +4647,418 @@ class RulerV(QWidget):
             p.drawLine(QPointF(4, y), QPointF(self.width() - 4, y))
 
 
+# ───────────────────────────── Фон и полупрозрачные панели ─────────────────────────────
+_WALL_CACHE = {}
+
+
+def blur_image(img, k):
+    w, h = img.width(), img.height()
+    for kk in (max(2, k), max(2, k // 2)):  # уменьшить-увеличить дважды = мягкое размытие
+        small = img.scaled(max(1, w // kk), max(1, h // kk), Qt.AspectRatioMode.IgnoreAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+        img = small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    return img
+
+
+def gradient_wallpaper(accent, dark):
+    """Мягкий фон из цветных пятен в тон цвету интерфейса."""
+    key = (accent, dark)
+    if key in _WALL_CACHE:
+        return _WALL_CACHE[key]
+    from PySide6.QtGui import QRadialGradient
+    W, H = 1600, 1000
+    img = QImage(W, H, QImage.Format.Format_RGB32)
+    img.fill(QColor("#0E1120" if dark else "#E7ECF6"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    blobs = [(0.16, 0.78, 0.55, accent), (0.04, 0.18, 0.42, mix(accent, "#12A594", 0.6)),
+             (0.88, 0.88, 0.5, mix(accent, "#F76B15", 0.55)), (0.82, 0.12, 0.46, mix(accent, "#D6409F", 0.6)),
+             (0.52, 0.46, 0.34, mix(accent, "#FFFFFF", 0.55))]
+    for cx, cy, r, col in blobs:
+        c = QColor(mix(col, "#000000", 0.35)) if dark else QColor(col)
+        g = QRadialGradient(cx * W, cy * H, r * W)
+        c0 = QColor(c)
+        c0.setAlpha(150 if dark else 175)
+        c1 = QColor(c)
+        c1.setAlpha(0)
+        g.setColorAt(0, c0)
+        g.setColorAt(1, c1)
+        p.fillRect(img.rect(), g)
+    p.end()
+    img = blur_image(img, 10)
+    _WALL_CACHE[key] = img
+    return img
+
+
+class WallRoot(QWidget):
+    """Корень окна: рисует фон (картинку или цвет) и держит его размытую копию для «стекла»."""
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.src = None
+        self.key = None
+        self.pm = None
+        self.blur = None
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(60)
+        self.timer.timeout.connect(self.rebuild)
+
+    def set_source(self, img, key):
+        if key == self.key and self.pm is not None:
+            return
+        self.key = key
+        self.src = img
+        self.rebuild()
+
+    def resizeEvent(self, e):
+        self.timer.start()
+
+    def rebuild(self):
+        if self.src is None or self.src.isNull() or self.width() < 10:
+            self.pm = self.blur = None
+            self.update()
+            return
+        dpr = self.devicePixelRatioF()
+        size = QSize(int(self.width() * dpr), int(self.height() * dpr))
+        scaled = self.src.scaled(size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                 Qt.TransformationMode.SmoothTransformation)
+        x, y = (scaled.width() - size.width()) // 2, (scaled.height() - size.height()) // 2
+        scaled = scaled.copy(x, y, size.width(), size.height())
+        if self.win.theme == "dark" and self.win.settings.value("wallpaper", "gradient") not in ("gradient", "none"):
+            p = QPainter(scaled)  # фото в тёмной теме чуть притемняем
+            p.fillRect(scaled.rect(), QColor(0, 0, 0, 90))
+            p.end()
+        self.pm = QPixmap.fromImage(scaled)
+        self.pm.setDevicePixelRatio(dpr)
+        k = int(self.win.settings.value("glass_blur", 12))
+        half = scaled.scaled(max(1, scaled.width() // 2), max(1, scaled.height() // 2),
+                             Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        bl = blur_image(half, max(2, k)).scaled(scaled.size(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                                                Qt.TransformationMode.SmoothTransformation)
+        self.blur = QPixmap.fromImage(bl)
+        self.blur.setDevicePixelRatio(dpr)
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(self.win.th["bg"]))
+        if self.pm is not None:
+            p.drawPixmap(self.rect(), self.pm)
+
+
+def panel_alpha(win):
+    try:
+        return max(0.05, min(1.0, float(win.settings.value("glass_tint", 0.55))))
+    except (TypeError, ValueError):
+        return 0.55
+
+
+def paint_pane(widget, p, r, radius, win):
+    """Полупрозрачная панель: размытый фон под ней + лёгкая заливка + тонкая светлая кромка."""
+    th = win.th
+    dark = win.theme == "dark"
+    path = QPainterPath()
+    path.addRoundedRect(r, radius, radius)
+    wall = getattr(win, "wall", None)
+    alpha = panel_alpha(win)
+    glass = win.settings.value("glass", "true") in (True, "true")
+    if wall is not None and not wall.isAncestorOf(widget):
+        wall = None  # панель в отдельном окне (диалог) — рисуем без фона
+    if wall is not None and wall.pm is not None and alpha < 0.999:
+        src = wall.blur if (glass and wall.blur is not None) else None
+        if src is not None:
+            off = widget.mapTo(wall, QPoint(0, 0))
+            p.save()
+            p.setClipPath(path)
+            p.drawPixmap(-off.x(), -off.y(), src)
+            p.restore()
+        tint = QColor(th["surface"])
+        tint.setAlphaF(alpha)
+    else:
+        tint = QColor(th["surface"])
+    p.fillPath(path, tint)
+    if glass and wall is not None and wall.pm is not None:
+        from PySide6.QtGui import QLinearGradient
+        g = QLinearGradient(0, r.top(), 0, r.bottom())
+        g.setColorAt(0, QColor(255, 255, 255, 26 if dark else 90))
+        g.setColorAt(0.6, QColor(255, 255, 255, 0))
+        p.fillPath(path, g)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.setPen(QPen(QColor(255, 255, 255, 40 if dark else 150) if wall is not None and wall.pm is not None
+                  else QColor(th["border"]), 1))
+    p.drawPath(path)
+
+
+class PageTrack(QWidget):
+    """Вертикальная полоса прокрутки по страницам: отметки — где начинаются страницы."""
+    W = 16
+    PAD = 6
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.setFixedWidth(self.W)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._drag = None
+
+    def metrics(self):
+        sb = self.win.editor.verticalScrollBar()
+        total = max(1, sb.maximum() + sb.pageStep())
+        return sb, total, max(1, self.height() - 2 * self.PAD)
+
+    def handle(self):
+        sb, total, avail = self.metrics()
+        hh = max(28.0, sb.pageStep() / total * avail)
+        hy = self.PAD + sb.value() / total * avail
+        return QRectF(3.5, hy, self.W - 7, min(hh, avail))
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        paint_pane(self, p, r, r.width() / 2, self.win)
+        sb, total, avail = self.metrics()
+        acc = QColor(self.win.th["accent"])
+        hc = QColor(acc)
+        hc.setAlpha(110)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(hc)
+        hr = self.handle()
+        p.drawRoundedRect(hr, hr.width() / 2, hr.width() / 2)
+        mark = QColor(self.win.th["text"])
+        mark.setAlpha(190)
+        p.setBrush(mark)
+        for n, y in self.win.editor.page_breaks_y:
+            yy = self.PAD + y / total * avail
+            p.drawRoundedRect(QRectF(3, yy - 2.5, self.W - 6, 5), 2.5, 2.5)
+
+    def page_at(self, y):
+        sb, total, avail = self.metrics()
+        doc_y = (y - self.PAD) / avail * total
+        return 1 + sum(1 for _, by in self.win.editor.page_breaks_y if by <= doc_y)
+
+    def mousePressEvent(self, e):
+        y = e.position().y()
+        sb, total, avail = self.metrics()
+        hr = self.handle()
+        if not hr.contains(QPointF(self.W / 2, y)):
+            sb.setValue(int((y - self.PAD) / avail * total - sb.pageStep() / 2))
+            hr = self.handle()
+        self._drag = (y, sb.value())
+
+    def mouseMoveEvent(self, e):
+        y = e.position().y()
+        if self._drag:
+            sb, total, avail = self.metrics()
+            y0, v0 = self._drag
+            sb.setValue(int(v0 + (y - y0) / avail * total))
+        QToolTip.showText(e.globalPosition().toPoint(), f"стр. {self.page_at(y)}", self)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+
+    def wheelEvent(self, e):
+        QApplication.sendEvent(self.win.editor.verticalScrollBar(), e)
+
+
+class BoardViewport(QWidget):
+    """Область доски, где живут стикеры. Прокручивается вместе с текстом."""
+    def __init__(self, win, parent):
+        super().__init__(parent)
+        self.win = win
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setAcceptDrops(True)
+
+    def wheelEvent(self, e):
+        QApplication.sendEvent(self.win.editor.verticalScrollBar(), e)
+
+    def mousePressEvent(self, e):
+        self.setFocus()
+        self.win.stickers.select(None)
+
+    def contextMenuEvent(self, e):
+        self.win.show_board_menu(self.mapToGlobal(e.pos()), e.pos())
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() or e.mimeData().hasImage():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        pos = e.position().toPoint()
+        done = False
+        for u in md.urls() if md.hasUrls() else []:
+            if u.isLocalFile() and Path(u.toLocalFile()).suffix.lower() in IMG_EXTS:
+                self.win.stickers.add_photo(u.toLocalFile(), pos)
+                pos += QPoint(20, 20)
+                done = True
+        if not done and md.hasImage():
+            img = QImage(md.imageData())
+            if not img.isNull():
+                self.win.stickers.add_photo(img, pos)
+                done = True
+        if done:
+            e.acceptProposedAction()
+
+    def paintEvent(self, e):
+        if any(not isinstance(s, ArrowSticker) for s in self.win.stickers.items):
+            return
+        p = QPainter(self)
+        f = QFont(self.win.ui_font)
+        f.setPointSizeF(9.5)
+        p.setFont(f)
+        p.setPen(QColor(self.win.th["muted"]))
+        p.drawText(QRectF(20, 70, self.width() - 40, 120), Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap,
+                   "Доска для заметок, фото и ссылок.\nНажми «+» или перетащи сюда картинку.\n\n"
+                   "Потяни кружок на краю стикера к строке текста — и они будут связаны линией.")
+
+
+class Board(QWidget):
+    """Левая колонка: непрозрачная доска со стикерами и кнопкой «+», которая всегда на месте."""
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.setObjectName("Board")
+        self.vp = BoardViewport(win, self)
+        self.plus = QToolButton(self)
+        self.plus.setObjectName("AddBtn")
+        self.plus.setToolTip("Добавить на доску: заметку, список дел, дедлайн, фото, ссылку, стрелку")
+        self.plus.setFixedSize(34, 34)
+        self.plus.setIconSize(QSize(18, 18))
+        self.plus.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.plus.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.plus.clicked.connect(lambda: win.show_board_menu(self.plus.mapToGlobal(self.plus.rect().bottomLeft()
+                                                                                    + QPoint(0, 6))))
+
+    def radius(self):
+        return 18 * getattr(self.win, "rf", 1.0)
+
+    def resizeEvent(self, e):
+        self.vp.setGeometry(self.rect())
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), self.radius(), self.radius())
+        from PySide6.QtGui import QRegion
+        self.vp.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        self.plus.move(10, 10)
+        self.plus.raise_()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        th = self.win.th
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QPen(QColor(th["border"]), 1))
+        p.setBrush(QColor(th["page"]))
+        p.drawRoundedRect(r, self.radius(), self.radius())
+
+
+class LinkOverlay(QWidget):
+    """Прозрачный слой поверх доски и страницы: рисует линии от стикеров к строкам текста."""
+    def __init__(self, win, parent):
+        super().__init__(parent)
+        self.win = win
+        self.temp = None
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+
+    def local(self, w, pt):
+        """Координаты виджета w → координаты слоя (слой лежит в родителе в точке 0,0)."""
+        return w.mapTo(self.parentWidget(), pt) - self.pos()
+
+    def set_temp(self, a, b=None):
+        self.temp = (a, b) if a is not None else None
+        self.update()
+
+    def text_point(self, cur):
+        ed = self.win.editor
+        vp = ed.viewport()
+        cr = ed.cursorRect(cur)
+        y = cr.center().y()
+        clipped = y < 0 or y > vp.height()
+        y = max(6, min(vp.height() - 6, y))
+        x = int(ed.document().documentMargin() - 14)
+        return QPointF(self.local(vp, QPoint(x, y))), clipped
+
+    @staticmethod
+    def curve(a, b):
+        path = QPainterPath(a)
+        dx = max(40.0, abs(b.x() - a.x()) * 0.5)
+        path.cubicTo(QPointF(a.x() + dx, a.y()), QPointF(b.x() - dx, b.y()), b)
+        return path
+
+    def paintEvent(self, e):
+        win = self.win
+        if not hasattr(win, "stickers"):
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        ed, board = win.editor, win.board
+        top = max(self.local(board, QPoint(0, 0)).y(), self.local(ed, QPoint(0, 0)).y())
+        bottom = min(self.local(board, QPoint(0, board.height())).y(), self.local(ed, QPoint(0, ed.height())).y())
+        left = self.local(board, QPoint(0, 0)).x()
+        right = self.local(ed, QPoint(ed.width(), 0)).x()
+        p.setClipRect(QRect(left, top, right - left, bottom - top))
+        acc = QColor(win.th["accent"])
+        if win.show_links:
+            for s in win.stickers.items:
+                if isinstance(s, ArrowSticker):
+                    continue
+                cur = win.stickers.anchors.get(s.d.get("id"))
+                if cur is None:
+                    continue
+                a = QPointF(self.local(s, QPoint(s.width() - Sticker.MARGIN, s.height() // 2)))
+                b, clipped = self.text_point(cur)
+                if (a.y() < top - 40 and b.y() <= top + 7) or (a.y() > bottom + 40 and b.y() >= bottom - 7):
+                    continue
+                col = QColor(s.d.get("link_c") or acc)
+                col.setAlpha(140 if clipped else 220)
+                pen = QPen(col, 2, Qt.PenStyle.DashLine if clipped else Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+                p.setPen(pen)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawPath(self.curve(a, b))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(col)
+                p.drawEllipse(b, 4, 4)
+        if self.temp and self.temp[1] is not None:
+            a, b = self.temp
+            pen = QPen(acc, 2, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(self.curve(QPointF(a), QPointF(b)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(acc)
+            p.drawEllipse(QPointF(b), 4.5, 4.5)
+
+
 class GlassBar(QFrame):
-    """Плавающая панель форматирования с живым размытием того, что под ней (как «стекло» в iOS)."""
-    PAD = 10  # поля под тень
+    """Полупрозрачная панель: под ней размытый фон окна (как «стекло» в iOS)."""
+    PAD = 0
 
     def __init__(self, win, radius=None):
         super().__init__()
         self.win = win
         self.radius = radius
         self.setObjectName("GlassBar")
-        self.blur = None
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.setInterval(12)
-        self.timer.timeout.connect(self.refresh_blur)
 
     def enabled(self):
         return self.win.settings.value("glass", "true") in (True, "true")
 
     def schedule(self):
-        if self.isVisible():
-            self.timer.start()
+        self.update()
 
     def refresh_blur(self):
-        if not self.enabled() or not self.isVisible():
-            self.blur = None
-            self.update()
-            return
-        ed = self.win.editor
-        w, h = self.width(), self.height()
-        canvas = QPixmap(w, h)
-        canvas.fill(QColor(self.win.th["bg"]))
-        top_left = ed.mapFrom(self.parentWidget(), self.pos())
-        src = QRect(top_left, QSize(w, h)).intersected(ed.rect())
-        if not src.isEmpty():
-            grab = ed.grab(src)
-            p = QPainter(canvas)
-            p.drawPixmap(src.topLeft() - top_left, grab)
-            p.end()
-        img = canvas.toImage()
-        blur = int(self.win.settings.value("glass_blur", 12))
-        for k in (max(2, blur), max(2, blur // 2)):  # два прохода: уменьшить-увеличить = мягкое размытие
-            small = img.scaled(max(1, w // k), max(1, h // k), Qt.AspectRatioMode.IgnoreAspectRatio,
-                               Qt.TransformationMode.SmoothTransformation)
-            img = small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        self.blur = QPixmap.fromImage(img)
         self.update()
 
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        th = self.win.th
-        dark = self.win.theme == "dark"
-        pad = self.PAD
-        r = QRectF(self.rect()).adjusted(pad, pad - 4, -pad, -pad)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         rf = getattr(self.win, "rf", 1.0)
-        radius = (r.height() / 2 if self.radius is None else self.radius) * rf
+        radius = (min(r.height() / 2, 24) if self.radius is None else self.radius) * rf
         radius = min(radius, r.height() / 2, r.width() / 2)
-        path = QPainterPath()
-        path.addRoundedRect(r, radius, radius)
-        # тень
-        p.setPen(Qt.PenStyle.NoPen)
-        for i in range(pad, 0, -2):
-            p.setBrush(QColor(0, 0, 0, (60 if dark else 16) // (i // 2 + 1)))
-            p.drawRoundedRect(r.adjusted(-i / 2, -i / 2 + 2, i / 2, i / 2 + 3), radius + i / 2, radius + i / 2)
-        if self.enabled() and self.blur is not None:
-            from PySide6.QtGui import QLinearGradient
-            p.save()
-            p.setClipPath(path)
-            p.drawPixmap(0, 0, self.blur)
-            tint = QColor(th["surface"])
-            tint.setAlphaF(float(self.win.settings.value("glass_tint", 0.40)))
-            p.fillPath(path, tint)
-            g = QLinearGradient(0, r.top(), 0, r.bottom())
-            g.setColorAt(0, QColor(255, 255, 255, 30 if dark else 120))
-            g.setColorAt(0.55, QColor(255, 255, 255, 0))
-            p.fillPath(path, g)
-            p.restore()
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(QColor(255, 255, 255, 45 if dark else 210), 1.2))
-            p.drawPath(path)
-            inner = QPainterPath()
-            inner.addRoundedRect(r.adjusted(1.5, 1.5, -1.5, -1.5), radius - 1.5, radius - 1.5)
-            p.setPen(QPen(QColor(0, 0, 0, 40 if dark else 14), 1))
-            p.drawPath(inner)
-        else:
-            p.setBrush(QColor(th["surface"]))
-            p.setPen(QPen(QColor(th["border"]), 1))
-            p.drawPath(path)
+        paint_pane(self, p, r, radius, self.win)
 
 
 # ───────────────────────────── Обрезка фото ─────────────────────────────
@@ -4813,21 +5243,22 @@ class Inspector(GlassBar):
         super().__init__(win, radius=22)
         self.setObjectName("Inspector")
         self.item = None
+        self.mode = "doc"
         self.spin = {}
         from PySide6.QtWidgets import QScrollArea
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(self.PAD + 4, self.PAD + 2, self.PAD + 4, self.PAD + 6)
+        outer.setContentsMargins(14, 8, 8, 10)
         outer.setSpacing(4)
         head = QHBoxLayout()
         self.title = QLabel("")
         self.title.setObjectName("DialogTitle")
         head.addWidget(self.title)
         head.addStretch()
-        close = RoundButton("Скрыть панель", size=30)
-        close.spec = ("svg", "close")
-        win.icon_buttons.append(close)
-        close.clicked.connect(self.hide_panel)
-        head.addWidget(close)
+        self.head_btn = RoundButton("", size=30)
+        self.head_btn.spec = ("svg", "chev")
+        win.icon_buttons.append(self.head_btn)
+        self.head_btn.clicked.connect(self.head_clicked)
+        head.addWidget(self.head_btn)
         outer.addLayout(head)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -4835,23 +5266,36 @@ class Inspector(GlassBar):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("QScrollArea{background:transparent;} QScrollArea > QWidget > QWidget{background:transparent;}")
         outer.addWidget(self.scroll, 1)
-        self.hide()
 
     def auto(self):
         return self.win.settings.value("inspector_auto", "true") in (True, "true")
 
+    def expanded(self):
+        return self.mode == "item" or self.win.settings.value("doc_panel_open", "false") in (True, "true")
+
+    def head_clicked(self):
+        if self.mode == "item":
+            self.win.stickers.select(None)
+        else:
+            self.win.settings.setValue("doc_panel_open", "false" if self.expanded() else "true")
+            self.rebuild()
+
+    def mousePressEvent(self, e):
+        if self.mode == "doc" and e.position().y() < 48:
+            self.head_clicked()
+
     def hide_panel(self):
         self.item = None
-        self.hide()
+        self.mode = "doc"
+        self.rebuild()
 
     def place(self):
-        area = self.win.editor_area
-        top = self.win.glass.geometry().bottom() + 2
-        content = self.scroll.widget().sizeHint().height() if self.scroll.widget() else 300
-        h = min(area.height() - top - 10, content + 80)
-        self.setGeometry(area.width() - self.WIDTH - 6, top, self.WIDTH, max(160, h))
-        self.raise_()
-        self.schedule()
+        lay = getattr(self.win, "right_lay", None)
+        if lay is not None:
+            open_ = self.expanded()
+            lay.setStretch(0, 1 if open_ else 0)
+            lay.setStretch(1, 0 if open_ else 1)
+        self.update()
 
     # ── конструктор полей ──
     def _section(self, lay, text):
@@ -4924,17 +5368,38 @@ class Inspector(GlassBar):
     # ── содержимое ──
     def show_for(self, item):
         self.item = item
+        self.mode = "item"
         self.rebuild()
-        self.show()
-        self.place()
 
     def rebuild(self):
         it = self.item
+        th = self.win.th
         if it is None:
+            self.mode = "doc"
+            self.title.setText("Документ")
+            open_ = self.expanded()
+            self.head_btn.spec = ("svg", "up" if open_ else "down")
+            self.head_btn.setToolTip("Свернуть" if open_ else "Настройки документа и вида")
+            self.head_btn.setIcon(make_icon(self.head_btn.spec, th))
+            self.scroll.setVisible(open_)
+            if open_:
+                box = QWidget()
+                box.setMaximumWidth(self.WIDTH - 30)
+                lay = QVBoxLayout(box)
+                lay.setContentsMargins(4, 0, 6, 8)
+                lay.setSpacing(6)
+                self.doc_fields(lay)
+                lay.addStretch()
+                self.scroll.setWidget(box)
+            self.place()
             return
+        self.head_btn.spec = ("svg", "close")
+        self.head_btn.setToolTip("Снять выделение")
+        self.head_btn.setIcon(make_icon(self.head_btn.spec, th))
+        self.scroll.setVisible(True)
         pos = self.scroll.verticalScrollBar().value()
         box = QWidget()
-        box.setMaximumWidth(self.WIDTH - 2 * self.PAD - 26)
+        box.setMaximumWidth(self.WIDTH - 30)
         lay = QVBoxLayout(box)
         lay.setContentsMargins(4, 0, 6, 8)
         lay.setSpacing(6)
@@ -4949,6 +5414,47 @@ class Inspector(GlassBar):
         self.scroll.setWidget(box)  # старое содержимое QScrollArea удаляет сам
         self.scroll.verticalScrollBar().setValue(pos)
         QTimer.singleShot(0, self.place)
+
+    def doc_fields(self, lay):
+        win, s = self.win, self.win.settings
+        text = win.doc().toPlainText()
+        words = len(re.findall(r"\w+", text))
+        notes = sum(1 for x in win.stickers.items if not isinstance(x, ArrowSticker))
+        pages = len(win.editor.page_breaks_y) + 1
+        info = QLabel(f"{pages} стр.  ·  {words} {plural(words, 'слово', 'слова', 'слов')}  ·  "
+                      f"{notes} {plural(notes, 'стикер', 'стикера', 'стикеров')}")
+        info.setObjectName("Muted")
+        lay.addWidget(info)
+        self._section(lay, "ТЕМА")
+        self._seg(lay, [("Светлая", "light"), ("Тёмная", "dark"), ("Авто", "system")], win.theme_mode,
+                  win.set_theme_mode)
+        self._section(lay, "ФОН ОКНА")
+        wm = s.value("wallpaper", "gradient")
+        self._seg(lay, [("Нет", "none"), ("Градиент", "gradient"), ("Фото…", "photo")],
+                  wm if wm in ("none", "gradient") else "photo", win.set_wallpaper_mode)
+        self._section(lay, "ПЛОТНОСТЬ ПАНЕЛЕЙ")
+        self._slider(lay, 5, 100, panel_alpha(win) * 100,
+                     lambda v: (s.setValue("glass_tint", v / 100), win.wall.update()), "%")
+        gl = QCheckBox("Размытие под панелями (стекло)")
+        gl.setChecked(s.value("glass", "true") in (True, "true"))
+        gl.toggled.connect(lambda on: (s.setValue("glass", "true" if on else "false"), win.wall.update()))
+        lay.addWidget(gl)
+        self._section(lay, "ЦВЕТ СТРАНИЦЫ И ДОСКИ")
+        key = f"page_{win.theme}"
+        self._colors(lay, [c for c in PAGE_PRESETS[win.theme] if c], s.value(key, ""),
+                     lambda c: (s.setValue(key, c or ""), win.apply_theme()), allow_none=True)
+        self._section(lay, "ПОКАЗЫВАТЬ")
+        for k, label in (("rulers", "Линейку отступов"), ("page_breaks", "Где заканчиваются страницы"),
+                         ("links", "Линии от стикеров к тексту")):
+            cb = QCheckBox(label)
+            cb.setChecked(s.value(k, "true") in (True, "true"))
+            cb.toggled.connect(lambda on, kk=k: (s.setValue(kk, "true" if on else "false"), win.apply_theme()))
+            lay.addWidget(cb)
+        self._section(lay, "ШИРИНА ДОСКИ")
+        self._slider(lay, 180, 520, float(s.value("board_width", 300)),
+                     lambda v: (s.setValue("board_width", v), win.apply_layout()), " px")
+        lay.addSpacing(4)
+        self._buttons(lay, [("Все настройки…", win.open_settings), ("Экспорт…", win.show_export_menu)])
 
     def arrow_fields(self, lay, a):
         d = a.d
@@ -5014,7 +5520,25 @@ class Inspector(GlassBar):
             row.addWidget(l)
             row.addWidget(sb, 1)
         lay.addLayout(row)
-        self._section(lay, "ВЫРАВНИВАНИЕ НА СТРАНИЦЕ")
+        self._section(lay, "СВЯЗЬ С ТЕКСТОМ")
+        cur = st.layer.anchors.get(d.get("id"))
+        if cur is not None:
+            snippet = cur.block().text().strip()
+            snippet = (snippet[:34] + "…") if len(snippet) > 35 else (snippet or "пустая строка")
+            info = QLabel(f"Связан со строкой: «{snippet}»")
+        else:
+            info = QLabel("Потяни кружок на правом краю стикера к нужной строке текста — или нажми кнопку ниже.")
+        info.setObjectName("Muted")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        btns = [("К строке с курсором", lambda: st.layer.set_link(st, st.layer.editor.textCursor().position()))]
+        if cur is not None:
+            btns += [("Показать строку", lambda: st.layer.reveal_link(st)), ("Отвязать", lambda: st.layer.unlink(st))]
+        self._buttons(lay, btns)
+        if cur is not None:
+            self._colors(lay, ARROW_COLORS[:8], d.get("link_c"), lambda c: (st.set("link_c", c), self.win.links.update()),
+                         allow_none=True)
+        self._section(lay, "ВЫРАВНИВАНИЕ НА ДОСКЕ")
         self._buttons(lay, [("⇤ Слева", lambda: self._align(st, "left")), ("По центру", lambda: self._align(st, "center")),
                             ("Справа ⇥", lambda: self._align(st, "right")), ("Наверх экрана", lambda: self._align(st, "top")),
                             ("Вперёд", lambda: st.layer.bring(st, True)),
@@ -5046,7 +5570,7 @@ class Inspector(GlassBar):
 
     def _align(self, st, where):
         vw = st.layer.viewport.width()
-        margin = 56 - Sticker.MARGIN
+        margin = 12 - Sticker.MARGIN
         if where == "left":
             st.d["x"] = margin
         elif where == "center":
@@ -5054,7 +5578,7 @@ class Inspector(GlassBar):
         elif where == "right":
             st.d["x"] = vw - st.d["w"] - margin
         elif where == "top":
-            st.d["y"] = st.layer.scroll() + 96
+            st.d["y"] = st.layer.scroll() + 52
         st.layer.place(st)
         st.layer.mark()
 
@@ -5222,23 +5746,31 @@ class Folio(QMainWindow):
 
         self.ui_font = "Segoe UI"
         self.th = THEMES[self.theme]
+        self.rf = 1.0
+        self.show_links = True
+        self.wall = WallRoot(self)
+        self.setCentralWidget(self.wall)
+        wl = QVBoxLayout(self.wall)
+        wl.setContentsMargins(0, 0, 0, 0)
         self.stack = QStackedWidget()
         self.stack.setObjectName("Root")
-        self.setCentralWidget(self.stack)
+        wl.addWidget(self.stack)
 
         self.browser = BrowserPage(self)
         self.stack.addWidget(self.browser)
 
         self.editor_page = QWidget()
         self.editor_page.setObjectName("Root")
-        v = QVBoxLayout(self.editor_page)
-        v.setContentsMargins(0, 0, 0, 0)
+        v = QHBoxLayout(self.editor_page)
+        v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(0)
-        v.addWidget(self._build_appbar())
+        left_pill, right_pill = self._build_appbar()
         self._build_fmtbar()
-        v.addWidget(self._build_findbar())
-        v.addWidget(self._build_editor_area(), 1)
-        v.addWidget(self._build_statusbar())
+        findbar = self._build_findbar()
+        status = self._build_statusbar()
+        v.addStretch()
+        v.addWidget(self._build_editor_area(left_pill, right_pill, findbar, status), 100)
+        v.addStretch()
         self.stack.addWidget(self.editor_page)
 
         self._build_shortcuts()
@@ -5261,31 +5793,33 @@ class Folio(QMainWindow):
         return b
 
     def _build_appbar(self):
-        bar = QWidget()
-        bar.setObjectName("AppBar")
-        bar.setFixedHeight(64)
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(16, 10, 16, 6)
-        h.setSpacing(4)
-
+        left = GlassBar(self)
+        left.setObjectName("GlassBar")
+        h = QHBoxLayout(left)
+        h.setContentsMargins(6, 5, 6, 5)
+        h.setSpacing(2)
         h.addWidget(self._btn("К проектам  (Alt+←)", ("svg", "back"), self.go_home))
-        h.addSpacing(4)
-
         tcol = QVBoxLayout()
         tcol.setSpacing(0)
+        tcol.setContentsMargins(2, 0, 2, 0)
         self.title_label = QLabel("Без названия")
         self.title_label.setObjectName("DocTitle")
         self.sub_label = QLabel("Новый документ")
         self.sub_label.setObjectName("DocSub")
+        for l in (self.title_label, self.sub_label):
+            l.setMinimumWidth(10)
+            l.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         tcol.addWidget(self.title_label)
         tcol.addWidget(self.sub_label)
-        h.addLayout(tcol)
-        h.addSpacing(12)
-
+        h.addLayout(tcol, 1)
         h.addWidget(self._btn("Новый документ  (Ctrl+N)", ("svg", "new"), lambda: self.new_document()))
         h.addWidget(self._btn("Открыть  (Ctrl+O)", ("svg", "open"), self.open_dialog))
-        h.addStretch()
+        self.left_pill = left
 
+        right = GlassBar(self)
+        h = QHBoxLayout(right)
+        h.setContentsMargins(6, 5, 6, 5)
+        h.setSpacing(2)
         self.undo_btn = self._btn("Отменить  (Ctrl+Z)", ("svg", "undo"), lambda: self.editor.undo())
         self.redo_btn = self._btn("Повторить  (Ctrl+Y)", ("svg", "redo"), lambda: self.editor.redo())
         h.addWidget(self.undo_btn)
@@ -5293,7 +5827,7 @@ class Folio(QMainWindow):
         h.addWidget(self._btn("Найти и заменить  (Ctrl+F)", ("svg", "find"), self.toggle_find))
         self.theme_btn = self._btn("Тёмная / светлая тема", ("svg", "moon"), self.toggle_theme)
         h.addWidget(self.theme_btn)
-        h.addWidget(self._btn("Внешний вид: цвета, страница, шрифт", ("svg", "tune"), self.open_settings))
+        h.addWidget(self._btn("Все настройки: цвета, фон, шрифты", ("svg", "tune"), self.open_settings))
 
         self.more_btn = self._btn("Ещё", ("svg", "more"))
         self.more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -5307,18 +5841,14 @@ class Folio(QMainWindow):
         self.view_actions = {}
         vm = styled_menu(menu)
         vm.setTitle("Вид")
-        for key, default, label in (("rulers", "true", "Линейки"),
+        for key, default, label in (("rulers", "true", "Линейка отступов"),
                                     ("page_breaks", "true", "Где заканчиваются страницы"),
-                                    ("bar_mode", "dock", "Панель над текстом (не перекрывает)")):
-            a = vm.addAction(label)
-            a.setCheckable(True)
-            if key == "bar_mode":
-                a.toggled.connect(lambda on: (self.settings.setValue("bar_mode", "dock" if on else "float"),
-                                              self.apply_theme()))
-            else:
-                a.toggled.connect(lambda on, k=key: (self.settings.setValue(k, "true" if on else "false"),
-                                                     self.apply_theme()))
-            self.view_actions[(key, default)] = a
+                                    ("links", "true", "Линии от стикеров к тексту")):
+            act = vm.addAction(label)
+            act.setCheckable(True)
+            act.toggled.connect(lambda on, k=key: (self.settings.setValue(k, "true" if on else "false"),
+                                                   self.apply_theme()))
+            self.view_actions[(key, default)] = act
         menu.addMenu(vm)
         menu.addSeparator()
         menu.addAction("Очистить форматирование", self.clear_formatting)
@@ -5326,15 +5856,15 @@ class Folio(QMainWindow):
         menu.addAction("Вставить таблицу…", self.insert_table)
         self.more_btn.setMenu(menu)
         h.addWidget(self.more_btn)
-        h.addSpacing(8)
-
+        h.addStretch()
         self.save_btn = QPushButton("Сохранить")
         self.save_btn.setObjectName("Pill")
         self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_btn.setToolTip("Ctrl+S")
         self.save_btn.clicked.connect(self.save)
         h.addWidget(self.save_btn)
-        return bar
+        self.right_pill = right
+        return left, right
 
     def _sep(self):
         s = QFrame()
@@ -5347,7 +5877,7 @@ class Folio(QMainWindow):
         self.glass = bar
         pad = GlassBar.PAD
         h = FlowLayout(bar, hspacing=2, vspacing=4)
-        h.setContentsMargins(pad + 10, pad + 1, pad + 8, pad + 5)
+        h.setContentsMargins(10, 5, 10, 5)
 
         self.style_box = QComboBox()
         self.style_box.addItems(["Обычный текст", "Заголовок 1", "Заголовок 2", "Заголовок 3"])
@@ -5545,31 +6075,22 @@ class Folio(QMainWindow):
         sc.activated.connect(lambda: self.find_next(True))
         return wrap
 
-    def _build_editor_area(self):
-        area = QWidget()
-        area.setObjectName("EditorArea")
-        self.editor_area = area
-        area.installEventFilter(self)
-        v = QVBoxLayout(area)
-        v.setContentsMargins(16, 0, 16, 0)
-        v.setSpacing(0)
-        self.bar_space = QWidget()
-        self.bar_space.setFixedHeight(0)
-        v.addWidget(self.bar_space)
-        h = QHBoxLayout()
-        h.setContentsMargins(0, 0, 0, 0)
-        v.addLayout(h, 1)
-        h.addStretch()
-        self.page_col = QWidget()
-        self.page_col.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        grid = QGridLayout(self.page_col)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(0)
+    def _build_editor_area(self, left_pill, right_pill, findbar, status):
+        body = QWidget()
+        body.setObjectName("EditorArea")
+        self.body = self.editor_area = body
+        body.installEventFilter(self)
+        g = QGridLayout(body)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(12)
+        g.setVerticalSpacing(10)
+        self.grid = g
+
         self.editor = Editor()
         self.editor.setObjectName("Editor")
-        self.editor.setMaximumWidth(880)
-        self.editor.setMinimumWidth(560)
+        self.editor.setMinimumWidth(420)
         self.editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.editor.setPlaceholderText("Начни писать…")
         self.editor.setAcceptRichText(True)
         self.editor.setTabStopDistance(36)
@@ -5582,50 +6103,141 @@ class Folio(QMainWindow):
         self.editor.undoAvailable.connect(lambda a: self.undo_btn.setEnabled(a))
         self.editor.redoAvailable.connect(lambda a: self.redo_btn.setEnabled(a))
         self.editor.textChanged.connect(lambda: self.count_timer.start())
-        self.ruler_corner = QWidget()
-        self.ruler_corner.setFixedSize(RulerV.W, RulerH.H)
+
         self.hruler = RulerH(self)
-        self.vruler = RulerV(self)
-        grid.addWidget(self.ruler_corner, 0, 0)
-        grid.addWidget(self.hruler, 0, 1)
-        grid.addWidget(self.vruler, 1, 0)
-        grid.addWidget(self.editor, 1, 1)
-        h.addWidget(self.page_col, 1)
-        h.addStretch()
+        self.board = Board(self)
+        self.track = PageTrack(self)
+        self.vruler = self.track
+        self.right_col = QWidget()
+        self.right_lay = QVBoxLayout(self.right_col)
+        self.right_lay.setContentsMargins(0, 0, 0, 0)
+        self.right_lay.setSpacing(0)
+
+        g.addWidget(left_pill, 0, 0)
+        g.addWidget(self.glass, 0, 1)
+        g.addWidget(right_pill, 0, 2, 1, 2)
+        g.addWidget(findbar, 1, 1)
+        g.addWidget(self.hruler, 2, 1)
+        g.addWidget(self.board, 3, 0, 2, 1)
+        g.addWidget(self.editor, 3, 1)
+        g.addWidget(self.track, 3, 2)
+        g.addWidget(status, 4, 1)
+        g.addWidget(self.right_col, 2, 3, 3, 1)
+        g.setColumnStretch(1, 1)
+        g.setRowStretch(3, 1)
+
         self.editor.cursorPositionChanged.connect(self.hruler.update)
-        self.editor.verticalScrollBar().valueChanged.connect(lambda _: self.vruler.update())
         self.editor.viewport().installEventFilter(self)
         self.break_timer = QTimer(self)
         self.break_timer.setSingleShot(True)
         self.break_timer.setInterval(500)
         self.break_timer.timeout.connect(self.update_page_breaks)
         self.editor.textChanged.connect(self.break_timer.start)
-        self.glass.setParent(area)
-        self.glass.raise_()
-        self.editor.verticalScrollBar().valueChanged.connect(lambda _: (self.glass.schedule(), self.inspector.schedule()))
-        self.editor.textChanged.connect(self.glass.schedule)
-        self.editor.selectionChanged.connect(self.glass.schedule)
-        self.stickers = StickerLayer(self, self.editor)
+        self.stickers = StickerLayer(self, self.editor, self.board.vp)
+        self.links = LinkOverlay(self, body)
+        sb = self.editor.verticalScrollBar()
+        sb.valueChanged.connect(lambda _: (self.track.update(), self.links.update()))
+        sb.rangeChanged.connect(lambda *_: self.track.update())
+        self.editor.textChanged.connect(self.links.update)
         self.inspector = Inspector(self)
-        self.inspector.setParent(area)
+        self.right_lay.addWidget(self.inspector)
+        self.right_lay.addStretch(1)
         self.count_timer = QTimer(self)
         self.count_timer.setSingleShot(True)
         self.count_timer.setInterval(250)
         self.count_timer.timeout.connect(self.update_counts)
-        return area
+        return body
+
+    def apply_layout(self):
+        """Ширины колонок: доска, страница, правая панель."""
+        st = self.settings
+        bw = int(float(st.value("board_width", 300)))
+        pw = int(float(st.value("page_width", 880)))
+        rw = Inspector.WIDTH
+        self.left_pill.setFixedWidth(bw)
+        self.board.setFixedWidth(bw)
+        self.right_col.setFixedWidth(rw)
+        self.right_pill.setFixedWidth(rw + PageTrack.W + self.grid.horizontalSpacing())
+        self.editor.setMaximumWidth(pw)
+        self.body.setMaximumWidth(bw + pw + PageTrack.W + rw + 3 * self.grid.horizontalSpacing())
+        self.hruler.setVisible(self.show_rulers)
+        self.update_title()
+        QTimer.singleShot(0, self.place_glass)
+
+    def show_board_menu(self, global_pos, local=None):
+        th = self.th
+        m = styled_menu(self)
+        m.addAction(make_icon(("svg", "sticky"), th), "Заметка", lambda: self.stickers.add_note("note"))
+        m.addAction(make_icon(("svg", "checklist"), th), "Список дел", lambda: self.stickers.add_note("todo"))
+        m.addAction(make_icon(("svg", "clock"), th), "Дедлайн", lambda: self.stickers.add_note("deadline"))
+        m.addAction(make_icon(("svg", "image"), th), "Фото…", self.add_photo_sticker)
+        m.addAction(make_icon(("svg", "link"), th), "Ссылка…", self.stickers.add_link)
+        m.addAction(make_icon(("svg", "arrow"), th), "Стрелка", lambda: self.stickers.add_arrow())
+        m.exec(global_pos)
+
+    def show_export_menu(self):
+        m = export_menu(self, self.export_as, self.th)
+        m.exec(QCursor.pos())
+
+    def set_theme_mode(self, k):
+        self.theme_mode = k
+        self.settings.setValue("theme", k)
+        self.theme = self.resolve_theme()
+        self.apply_theme()
+
+    def set_wallpaper_mode(self, k):
+        if k == "photo":
+            path, _ = QFileDialog.getOpenFileName(self, "Фон окна", str(Path.home() / "Pictures"),
+                                                  "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)")
+            if not path:
+                return
+            if QImage(path).isNull():
+                QMessageBox.warning(self, APP_NAME, "Не получилось открыть эту картинку.")
+                return
+            dst = fonts_dir().parent / ("wallpaper" + Path(path).suffix.lower())
+            for old in fonts_dir().parent.glob("wallpaper.*"):
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+            try:
+                shutil.copy2(path, dst)
+            except OSError as e:
+                QMessageBox.warning(self, APP_NAME, f"Не получилось скопировать картинку:\n{e}")
+                return
+            k = str(dst)
+        self.settings.setValue("wallpaper", k)
+        self.apply_theme()
+
+    def wallpaper_image(self):
+        mode = self.settings.value("wallpaper", "gradient") or "gradient"
+        if mode == "none":
+            return None, ("none",)
+        blur = self.settings.value("glass_blur", 12)
+        if mode != "gradient":
+            p = Path(mode)
+            try:
+                key = ("file", str(p), p.stat().st_mtime, self.theme, blur)
+            except OSError:
+                key = None
+            if key is not None:
+                if getattr(self, "_wall_file_key", None) != key[:3]:
+                    self._wall_file_img = QImage(str(p))
+                    self._wall_file_key = key[:3]
+                if not self._wall_file_img.isNull():
+                    return self._wall_file_img, key
+        return gradient_wallpaper(self.th["accent"], self.theme == "dark"), ("gradient", self.th["accent"],
+                                                                              self.theme, blur)
 
     def _build_statusbar(self):
-        bar = QWidget()
-        bar.setObjectName("StatusBar")
-        bar.setFixedHeight(40)
+        bar = GlassBar(self)
+        bar.setFixedHeight(32)
         h = QHBoxLayout(bar)
-        h.setContentsMargins(24, 6, 24, 8)
+        h.setContentsMargins(16, 2, 8, 2)
         self.count_label = QLabel("0 слов")
         self.count_label.setObjectName("Muted")
         self.toast = QLabel("")
         self.toast.setObjectName("Toast")
-        self.count_label.setMinimumWidth(260)
-        self.toast.setMinimumWidth(260)
         self.toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.format_chip = QLabel("DOCX")
         self.format_chip.setObjectName("Chip")
@@ -5634,7 +6246,7 @@ class Folio(QMainWindow):
         h.addWidget(self.toast)
         h.addStretch()
         right = QWidget()
-        right.setMinimumWidth(260)
+        right.setMinimumWidth(120)
         rl = QHBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.addStretch()
@@ -5686,7 +6298,8 @@ class Folio(QMainWindow):
 
     # ── Тема ──
     def eventFilter(self, obj, ev):
-        if obj is getattr(self, "editor_area", None) and ev.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+        if obj is getattr(self, "body", None) and ev.type() in (QEvent.Type.Resize, QEvent.Type.Show,
+                                                                  QEvent.Type.LayoutRequest):
             self.place_glass()
         elif hasattr(self, "editor") and obj is self.editor.viewport() and ev.type() == QEvent.Type.Resize:
             self.break_timer.start()
@@ -5694,24 +6307,13 @@ class Folio(QMainWindow):
         return super().eventFilter(obj, ev)
 
     def docked(self):
-        return self.settings.value("bar_mode", "dock") != "float"
+        return True
 
     def place_glass(self):
-        if self.inspector.isVisible():
-            QTimer.singleShot(0, self.inspector.place)
-        g, area = self.glass, self.editor_area
-        lay = g.layout()
-        w = max(200, min(lay.one_row_width(), area.width() - 8))
-        h = lay.heightForWidth(w)
-        g.setGeometry(max(0, (area.width() - w) // 2), 0, w, h)
-        g.raise_()
-        if self.docked():
-            self.bar_space.setFixedHeight(max(0, h - GlassBar.PAD + 2))
-            self.set_doc_top(36)
-        else:
-            self.bar_space.setFixedHeight(0)
-            self.set_doc_top(h + 18)
-        g.schedule()
+        if hasattr(self, "links"):
+            self.links.setGeometry(self.body.rect())
+            self.links.raise_()
+            self.links.update()
 
     def set_doc_top(self, top):
         d = self.doc()
@@ -5726,8 +6328,8 @@ class Folio(QMainWindow):
 
     def update_page_breaks(self):
         ed = self.editor
-        if not (self.show_breaks or self.show_rulers):
-            ed.page_breaks_y = []
+        if False:
+            pass
         else:
             try:
                 breaks = compute_page_breaks(self.doc())
@@ -5748,7 +6350,8 @@ class Folio(QMainWindow):
                 out.append((n, y))
             ed.page_breaks_y = out
         ed.viewport().update()
-        self.vruler.update()
+        self.track.update()
+        self.links.update()
 
     def toggle_setting(self, key, default):
         cur = self.settings.value(key, default) in (True, "true")
@@ -5806,6 +6409,7 @@ class Folio(QMainWindow):
         self._update_color_icon()
         self.browser.grid.viewport().update()
         self.add_btn.setIcon(QIcon(svg_pixmap(SVG["plus"], th["accent_text"], size=20, stroke=2.4)))
+        self.board.plus.setIcon(QIcon(svg_pixmap(SVG["plus"], th["accent_text"], size=18, stroke=2.4)))
         if hasattr(self, "stickers"):
             self.stickers.refresh_styles()
         if hasattr(self, "glass"):
@@ -5816,8 +6420,7 @@ class Folio(QMainWindow):
         if hasattr(self, "view_actions"):
             for key, act in self.view_actions.items():
                 act.blockSignals(True)
-                act.setChecked(self.settings.value(key[0], key[1]) in (True, "true") if key[0] != "bar_mode"
-                               else self.docked())
+                act.setChecked(self.settings.value(key[0], key[1]) in (True, "true"))
                 act.blockSignals(False)
 
         # переключатель (вкл/выкл) с кружком
@@ -5847,24 +6450,30 @@ class Folio(QMainWindow):
         st = self.settings
         self.show_rulers = st.value("rulers", "true") in (True, "true")
         self.show_breaks = st.value("page_breaks", "true") in (True, "true")
+        self.show_links = st.value("links", "true") in (True, "true")
         tb_s = float(st.value("toolbar_scale", 1.0))
         tb_font = float(st.value("toolbar_font", 10))
         tb_r = round(18 * tb_s)
         self.rf = float(st.value("ui_round", 1.0))
         ui_size = float(st.value("ui_font", 10))
-        self.editor.setMaximumWidth(int(st.value("page_width", 880)))
-        for wdg in (self.hruler, self.vruler, self.ruler_corner):
-            wdg.setVisible(self.show_rulers)
-        self.page_col.setMaximumWidth(int(st.value("page_width", 880)) + (RulerV.W if self.show_rulers else 0))
+        self.apply_layout()
+        img, key = self.wallpaper_image()
+        self.wall.set_source(img, key)
+        wall_on = img is not None
+        ov = QColor(th["surface"])
+        empty_bg = f"rgba({ov.red()},{ov.green()},{ov.blue()},0.82)"
         sheet = f"""
         * {{ font-family: "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif; font-size: {ui_size:g}pt; color: {th['text']}; }}
-        #Root, #AppBar, #FmtWrap, #EditorArea, #StatusBar {{ background: {th['bg']}; }}
+        #Root, #AppBar, #FmtWrap, #EditorArea, #StatusBar, #Browser {{ background: transparent; }}
+        #EmptyPill {{ background: {empty_bg}; border-radius: 22px; padding: 26px 34px; color: {th['muted']};
+                      font-size: 11pt; }}
         #DocTitle {{ font-size: 12pt; font-weight: 600; }}
         #DocSub, #Muted {{ color: {th['muted']}; font-size: 9pt; }}
         #Toast {{ color: {th['accent']}; font-size: 9pt; font-weight: 600; }}
         #Chip {{ background: {th['surface']}; border: 1px solid {th['border']}; border-radius: 11px;
                  padding: 2px 10px; color: {th['muted']}; font-size: 8.5pt; font-weight: 600; }}
         #FmtBar {{ background: {th['surface']}; border: 1px solid {th['border']}; border-radius: 23px; }}
+        #Board QToolButton#AddBtn {{ border-radius: 17px; }}
         #Sep {{ background: {th['border']}; }}
         QToolButton {{ background: transparent; border: none; border-radius: 18px; }}
         QToolButton:hover {{ background: {th['hover']}; }}
@@ -5890,8 +6499,8 @@ class Folio(QMainWindow):
             border-radius: 10px; padding: 4px; outline: none; selection-background-color: {th['soft']};
             selection-color: {th['text']}; }}
         QSpinBox::up-button, QSpinBox::down-button {{ width: 0px; border: none; }}
-        #Editor {{ font-family: "{DEFAULT_FONT}"; font-size: {DEFAULT_SIZE}pt; background: {th['page']}; border: 1px solid {th['border']}; border-top-left-radius: 18px;
-                   border-top-right-radius: 18px; border-bottom: none; color: {th['doc_text']};
+        #Editor {{ font-family: "{DEFAULT_FONT}"; font-size: {DEFAULT_SIZE}pt; background: {th['page']};
+                   border: 1px solid {th['border']}; border-radius: 18px; color: {th['doc_text']};
                    selection-background-color: {th['sel']}; selection-color: {th['doc_text']}; }}
         #GlassBar, #Inspector {{ background: transparent; border: none; }}
         #GlassBar QToolButton {{ border-radius: {tb_r}px; }}
@@ -5936,7 +6545,6 @@ class Folio(QMainWindow):
         QScrollBar:horizontal {{ height: 0px; }}
         QDialog#Dialog, QWidget#Dialog, QMessageBox {{ background: {th['surface']}; }}
         #DialogTitle {{ font-size: 13pt; font-weight: 600; }}
-        #Browser {{ background: {th['bg']}; }}
         #PageHeading {{ font-size: 20pt; font-weight: 700; padding: 4px 4px 0 4px; }}
         #Empty {{ color: {th['muted']}; font-size: 11pt; }}
         QListWidget#Grid {{ background: transparent; border: none; outline: none; }}
@@ -5955,7 +6563,12 @@ class Folio(QMainWindow):
         self._dark_titlebar(self.theme == "dark")
         self.apply_toolbar_scale()
         self.hruler.update()
-        self.vruler.update()
+        self.track.update()
+        self.board.update()
+        self.links.update()
+        self.wall.update()
+        if hasattr(self, "inspector") and self.inspector.mode == "doc":
+            self.inspector.rebuild()
         QTimer.singleShot(0, self.place_glass)
         self.break_timer.start()
 
@@ -6001,11 +6614,12 @@ class Folio(QMainWindow):
         f.setPointSizeF(DEFAULT_SIZE)
         d.setDefaultFont(f)
         d.setDocumentMargin(56)
-        ff = d.rootFrame().frameFormat()
-        ff.setTopMargin(36 if self.docked() else max(92, self.glass.height() + 18))
-        d.rootFrame().setFrameFormat(ff)
         d.modificationChanged.connect(self.update_title)
         d.setUndoRedoEnabled(False)
+        ff = d.rootFrame().frameFormat()
+        ff.setTopMargin(40)
+        ff.setBottomMargin(360)  # можно прокрутить ниже текста — место для стикеров на доске
+        d.rootFrame().setFrameFormat(ff)
         self.apply_spacing_all()
         d.setUndoRedoEnabled(True)
         d.setModified(False)
@@ -6014,6 +6628,7 @@ class Folio(QMainWindow):
         self.editor.page_breaks_y = []
         self.break_timer.start()
         self.hruler.update()
+        self.inspector.rebuild()
 
     def apply_spacing_all(self):
         cur = QTextCursor(self.doc())
@@ -6051,16 +6666,20 @@ class Folio(QMainWindow):
     def update_title(self, *_):
         dirty = self.doc().isModified()
         name = self.display_name()
-        self.title_label.setText(name + ("  •" if dirty else ""))
         if self.path:
             parent = Path(self.path).parent
             try:
                 rel = parent.relative_to(self.browser.root)
-                self.sub_label.setText(" › ".join(("Проекты",) + rel.parts))
+                sub = " › ".join(("Проекты",) + rel.parts)
             except ValueError:
-                self.sub_label.setText(str(parent))
+                sub = str(parent)
         else:
-            self.sub_label.setText("Новый документ")
+            sub = "Новый документ"
+        # длинные названия аккуратно обрезаем «…», чтобы влезли в левую панель
+        for lab, text in ((self.title_label, name + ("  •" if dirty else "")), (self.sub_label, sub)):
+            w = max(40, lab.width() - 2)
+            lab.setText(lab.fontMetrics().elidedText(text, Qt.TextElideMode.ElideMiddle, w))
+            lab.setToolTip(text)
         self.setWindowTitle(f"{'• ' if dirty else ''}{name} — {APP_NAME}")
         self.format_chip.setText(self.fmt.upper() + (f" · {self.encoding.upper()}" if self.fmt == "txt" else ""))
 
