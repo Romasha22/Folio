@@ -37,7 +37,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
 APP_NAME = "Folio"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 GITHUB_REPO = "Romasha22/Folio"
 DEFAULT_FONT = "Segoe UI"
 DEFAULT_SIZE = 12
@@ -1596,16 +1596,20 @@ class LinkDialog(BaseDialog):
         return name, url
 
 
-def ask_copy_or_link(parent, n):
+def ask_copy_or_link(parent, n, names=None):
     box = QMessageBox(parent)
     box.setWindowTitle(APP_NAME)
     box.setIcon(QMessageBox.Icon.NoIcon)
-    what = "файл" if n == 1 else f"файлы ({n})"
+    what = f"«{names[0]}»" if names and n == 1 else ("файл" if n == 1 else f"{n} {plural(n, 'элемент', 'элемента', 'элементов')}")
     box.setText(f"Как добавить {what}?")
-    box.setInformativeText("Копия будет лежать прямо в папке проекта.\n"
-                           "Ссылка оставит файл на своём месте — проект будет просто на него указывать.")
-    copy = box.addButton("Скопировать сюда", QMessageBox.ButtonRole.AcceptRole)
-    link = box.addButton("Прикрепить ссылкой", QMessageBox.ButtonRole.ActionRole)
+    box.setInformativeText(
+        "📄 Скопировать — Folio сделает свою копию в «Документы\\Folio». "
+        "Оригинал на компьютере останется как был, правки в Folio его не трогают.\n\n"
+        "🔗 Ссылкой — ничего не копируется, файл или папка остаются на своём месте. "
+        "Folio просто показывает их здесь, и все правки идут прямо в оригинал. "
+        "Если оригинал удалить или переместить — ссылка перестанет работать.")
+    copy = box.addButton("Скопировать", QMessageBox.ButtonRole.AcceptRole)
+    link = box.addButton("Ссылкой", QMessageBox.ButtonRole.ActionRole)
     box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
     box.exec()
     c = box.clickedButton()
@@ -1727,13 +1731,17 @@ def list_dir(d):
             items.append(dict(kind="folder", path=str(p), name=e.name, color=folder_color(p),
                               count=count, mtime=mtime))
         elif p.suffix.lower() == ".url":
-            items.append(dict(kind="link", path=str(p), name=p.stem, url=read_url_file(p), mtime=mtime))
+            url = read_url_file(p)
+            target = Path(QUrl(url).toLocalFile()) if QUrl(url).isLocalFile() else None
+            linked_dir = target is not None and target.is_dir()
+            items.append(dict(kind="link", path=str(p), name=p.stem, url=url, mtime=mtime, linked_dir=linked_dir,
+                              color=folder_color(target) if linked_dir else None, broken=bool(target) and not target.exists()))
         elif p.suffix.lower() in DOC_EXTS:
             items.append(dict(kind="doc", path=str(p), name=p.stem, ext=p.suffix.lower(), mtime=mtime))
         else:
             items.append(dict(kind="file", path=str(p), name=p.stem, ext=p.suffix.lower(), mtime=mtime))
     order = {"folder": 0, "doc": 1, "link": 2, "file": 3}
-    items.sort(key=lambda it: (order[it["kind"]], it["name"].casefold()))
+    items.sort(key=lambda it: (0 if it.get("linked_dir") else order[it["kind"]], it["name"].casefold()))
     return items
 
 
@@ -1911,6 +1919,15 @@ class CardDelegate(QStyledItemDelegate):
             p.fillPath(bp, QColor(th["accent"]))
             p.setPen(QColor(th["accent_text"]))
             p.drawText(br, Qt.AlignmentFlag.AlignCenter, badge)
+        elif kind == "link" and it.get("linked_dir"):
+            p.fillPath(pp, QColor(it["color"]))
+            pm = cached_svg("folder", "#FFFFFF", 46)
+            p.drawPixmap(int(prev.center().x() - 23), int(prev.center().y() - 30), pm)
+            badge = QRectF(prev.right() - 34, prev.y() + 8, 26, 26)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(255, 255, 255, 235))
+            p.drawEllipse(badge)
+            p.drawPixmap(int(badge.x() + 4), int(badge.y() + 4), cached_svg("link", it["color"], 18))
         elif kind == "link":
             url = QUrl(it.get("url", ""))
             p.fillPath(pp, QColor(th["soft"]))
@@ -1953,7 +1970,12 @@ class CardDelegate(QStyledItemDelegate):
         if kind == "folder":
             sub = "Проект" if Path(it["path"]).parent == self.win.browser.root else "Папка"
         elif kind == "link":
-            sub = "Ссылка на файл" if QUrl(it.get("url", "")).isLocalFile() else "Ссылка"
+            if it.get("broken"):
+                sub = "⚠ оригинал не найден"
+            elif it.get("linked_dir"):
+                sub = "Папка-ссылка"
+            else:
+                sub = "Ссылка на файл" if QUrl(it.get("url", "")).isLocalFile() else "Ссылка"
         else:
             sub = short_date(it["mtime"])
         p.drawText(QRectF(name_r.x(), name_r.bottom() + 2, name_r.width(), 18), 0, sub)
@@ -2000,8 +2022,10 @@ class Grid(QListWidget):
 
     def _target_row(self, pos):
         item = self.itemAt(pos)
-        if item and item.data(Qt.ItemDataRole.UserRole)["kind"] == "folder" and not item.isSelected():
-            return self.row(item)
+        if item and not item.isSelected():
+            it = item.data(Qt.ItemDataRole.UserRole)
+            if it["kind"] == "folder" or it.get("linked_dir"):
+                return self.row(item)
         return -1
 
     def dragEnterEvent(self, e):
@@ -2030,7 +2054,11 @@ class Grid(QListWidget):
     def dropEvent(self, e):
         row = self._target_row(e.position().toPoint())
         self.drop_row = -1
-        target = Path(self.item(row).data(Qt.ItemDataRole.UserRole)["path"]) if row >= 0 else self.page.cwd
+        if row >= 0:
+            it = self.item(row).data(Qt.ItemDataRole.UserRole)
+            target = Path(QUrl(it["url"]).toLocalFile()) if it.get("linked_dir") else Path(it["path"])
+        else:
+            target = self.page.cwd
         md = e.mimeData()
         e.setDropAction(Qt.DropAction.CopyAction)
         e.accept()
@@ -2099,6 +2127,7 @@ class BrowserPage(QWidget):
         self.win = win
         self.root = workspace_root()
         self.cwd = self.root
+        self.ext = None  # папка-ссылка, в которой мы сейчас (оригинал вне «Документы\\Folio»)
         self.setObjectName("Browser")
 
         v = QVBoxLayout(self)
@@ -2188,14 +2217,24 @@ class BrowserPage(QWidget):
     def at_root(self):
         return self.cwd == self.root
 
-    def navigate(self, path):
+    def inside(self, path, base):
+        try:
+            Path(path).relative_to(base)
+            return True
+        except ValueError:
+            return False
+
+    def navigate(self, path, ext_name=None):
+        """Внутри «Документы\\Folio» или внутри папки-ссылки (оригинал лежит в другом месте)."""
         path = Path(path)
         if not path.exists() or not path.is_dir():
             path = self.root
-        try:
-            path.relative_to(self.root)
-        except ValueError:
-            path = self.root
+        if ext_name is not None:
+            self.ext = (path, ext_name)
+        if self.inside(path, self.root):
+            self.ext = None
+        elif not (getattr(self, "ext", None) and self.inside(path, self.ext[0])):
+            path, self.ext = self.root, None
         self.cwd = path
         if self.watcher.directories():
             self.watcher.removePaths(self.watcher.directories())
@@ -2215,10 +2254,15 @@ class BrowserPage(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         chain = [self.root]
-        if not self.at_root():
-            rel = self.cwd.relative_to(self.root)
-            acc = self.root
-            for part in rel.parts:
+        names = {}
+        ext = getattr(self, "ext", None)
+        base = ext[0] if ext else self.root
+        if ext:
+            chain.append(ext[0])
+            names[ext[0]] = "🔗 " + ext[1]
+        if self.cwd != base:
+            acc = base
+            for part in self.cwd.relative_to(base).parts:
                 acc = acc / part
                 chain.append(acc)
         # длинные пути сокращаем: Проекты › … › предпоследняя › текущая
@@ -2231,7 +2275,7 @@ class BrowserPage(QWidget):
             if c is None:
                 b = CrumbButton("…", chain[-3], self)
             else:
-                b = CrumbButton("Проекты" if c == self.root else c.name, c, self, current=(c == self.cwd))
+                b = CrumbButton("Проекты" if c == self.root else names.get(c, c.name), c, self, current=(c == self.cwd))
             self.crumbs.addWidget(b)
         self.heading.setText("Мои проекты" if self.at_root() else self.cwd.name)
         self.create_btn.setToolTip("Новый проект" if self.at_root() else "Создать: документ, папку, ссылку")
@@ -2356,10 +2400,7 @@ class BrowserPage(QWidget):
             write_url_file(last, u.toString())
         local = [p for p in local if p.exists()]
         if local:
-            if target == self.root:
-                QMessageBox.information(self, APP_NAME, "Сначала открой проект — файлы добавляются внутрь проекта.")
-                return
-            mode = ask_copy_or_link(self, len(local))
+            mode = ask_copy_or_link(self, len(local), [p.name for p in local])
             if not mode:
                 return
             for src in local:
@@ -2389,8 +2430,13 @@ class BrowserPage(QWidget):
             self.navigate(it["path"])
         elif it["kind"] == "doc":
             self.win.open_from_browser(it["path"])
+        elif it["kind"] == "link" and it.get("linked_dir"):
+            self.navigate(QUrl(it["url"]).toLocalFile(), ext_name=it["name"])
         elif it["kind"] == "link":
-            if it.get("url"):
+            if it.get("broken"):
+                QMessageBox.information(self, APP_NAME, "Оригинал этой ссылки не найден — его удалили или переместили.\n"
+                                                        "Правый клик → «Изменить ссылку», чтобы указать новое место.")
+            elif it.get("url"):
                 open_href(it["url"], self.win)
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(it["path"]))
@@ -4285,10 +4331,22 @@ class StickerLayer(QObject):
         if self.save_timer.isActive():
             self.save_timer.stop()
             self.save()
+        self.load_data(read_sidecar(doc_path)["stickers"] if doc_path else [], doc_path)
+
+    def dump(self):
+        """Копия всех стикеров и стрелок (для переключения вкладок)."""
+        for c in self.conns:
+            for k in (1, 2):
+                cur = self.anchors.get((c.d["id"], k))
+                if cur is not None:
+                    c.d[f"t{k}"] = cur.position()
+        return json.loads(json.dumps([s.d for s in self.items] + [c.d for c in self.conns], ensure_ascii=False))
+
+    def load_data(self, data, doc_path):
+        self.save_timer.stop()
         self.clear()
         self.path = doc_path
-        if doc_path:
-            data = read_sidecar(doc_path)["stickers"]
+        if data:
             for d in data:
                 if d.get("type") == "arrow":
                     continue
@@ -5222,6 +5280,73 @@ class GlassBar(QFrame):
         paint_pane(self, p, r, radius, self.win)
 
 
+class TabStrip(GlassBar):
+    """Вкладки открытых документов. Видны, когда открыто больше одного."""
+    def __init__(self, win):
+        super().__init__(win)
+        self.setFixedHeight(38)
+        self.h = QHBoxLayout(self)
+        self.h.setContentsMargins(5, 4, 5, 4)
+        self.h.setSpacing(3)
+
+    def rebuild(self):
+        win = self.win
+        while self.h.count():
+            it = self.h.takeAt(0)
+            w = it.widget()
+            if w:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        th = win.th
+        for i, t in enumerate(win.tabs):
+            current = i == win.cur_tab
+            path = win.path if current else t.get("path")
+            doc = win.doc() if current else t.get("doc")
+            name = Path(path).stem if path else "Без названия"
+            dirty = doc is not None and doc.isModified()
+            box = QWidget()
+            box.setObjectName("TabCur" if current else "Tab")
+            box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            bl = QHBoxLayout(box)
+            bl.setContentsMargins(10, 0, 2, 0)
+            bl.setSpacing(0)
+            lab = QPushButton()
+            lab.setObjectName("TabLabel")
+            lab.setCursor(Qt.CursorShape.PointingHandCursor)
+            fm = lab.fontMetrics()
+            lab.setText(fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 150) + ("  •" if dirty else ""))
+            lab.setToolTip(path or "Новый документ — ещё не сохранён")
+            lab.clicked.connect(lambda _=False, k=i: win.switch_tab(k))
+            bl.addWidget(lab)
+            x = QToolButton()
+            x.setObjectName("TabClose")
+            x.setFixedSize(22, 22)
+            x.setIconSize(QSize(12, 12))
+            x.setIcon(QIcon(svg_pixmap(SVG["close"], th["muted"], size=12, stroke=2.2)))
+            x.setToolTip("Закрыть вкладку  (Ctrl+W)")
+            x.setCursor(Qt.CursorShape.PointingHandCursor)
+            x.clicked.connect(lambda _=False, k=i: win.close_tab(k))
+            bl.addWidget(x)
+            box.setFixedHeight(30)
+            box.mousePressEvent = (lambda e, k=i: win.close_tab(k) if e.button() == Qt.MouseButton.MiddleButton
+                                   else win.switch_tab(k))
+            self.h.addWidget(box)
+        plus = QToolButton()
+        plus.setObjectName("TabClose")
+        plus.setFixedSize(28, 28)
+        plus.setIcon(QIcon(svg_pixmap(SVG["plus"], th["text"], size=16, stroke=2.2)))
+        plus.setToolTip("Новый документ во вкладке  (Ctrl+N)")
+        plus.setCursor(Qt.CursorShape.PointingHandCursor)
+        plus.clicked.connect(lambda: win.new_document())
+        self.h.addWidget(plus)
+        self.h.addStretch()
+        self.setVisible(len(win.tabs) > 1)
+
+    def refresh(self):
+        self.rebuild()
+
+
 # ───────────────────────────── Обрезка фото ─────────────────────────────
 class CropView(QWidget):
     def __init__(self, img, crop):
@@ -5766,6 +5891,174 @@ class Inspector(GlassBar):
             sb.blockSignals(False)
 
 
+SAVE_FORMATS = [("Word (.docx) — сохраняет оформление", "docx"), ("Простой текст (.txt) — без оформления", "txt"),
+                ("Markdown (.md)", "md"), ("Веб-страница (.html)", "html")]
+
+
+def has_rich_format(qdoc, fmt):
+    """Есть ли в тексте оформление, которое потеряется в .txt (или в .md)."""
+    md = fmt == "md"
+    b = qdoc.begin()
+    while b.isValid():
+        bf = b.blockFormat()
+        if not md and (bf.headingLevel() or b.textList() is not None):
+            return True
+        al = bf.alignment()
+        if al & (Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignJustify):
+            return True
+        if abs(bf.leftMargin()) > 0.5 or abs(bf.textIndent()) > 0.5:
+            return True
+        it = b.begin()
+        while not it.atEnd():
+            f = it.fragment()
+            it += 1
+            if not f.isValid() or not f.text().strip():
+                continue
+            cf = f.charFormat()
+            if cf.isImageFormat():
+                return True
+            if not md and (cf.fontWeight() >= 600 or cf.fontItalic() or cf.fontStrikeOut() or cf.isAnchor()):
+                return True
+            if cf.underlineStyle() != QTextCharFormat.UnderlineStyle.NoUnderline and not cf.isAnchor():
+                return True
+            if cf.foreground().style() != Qt.BrushStyle.NoBrush or cf.background().style() != Qt.BrushStyle.NoBrush:
+                return True
+            if cf.fontFamilies() or (cf.fontPointSize() and abs(cf.fontPointSize() - DEFAULT_SIZE) > 0.1
+                                     and not bf.headingLevel()):
+                return True
+        b = b.next()
+    return False
+
+
+class SaveDialog(BaseDialog):
+    """Куда сохранить: сразу в нужный проект или папку (или в любое место на компьютере)."""
+    def __init__(self, win, name, fmt, start_dir):
+        super().__init__(win, "Сохранить документ", "Сохранить")
+        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+        self.win = win
+        self.setMinimumWidth(460)
+        self.name = self.field("Название", name)
+        l = QLabel("Формат")
+        l.setObjectName("Muted")
+        self.lay.addWidget(l)
+        self.fmt = QComboBox()
+        for label, key in SAVE_FORMATS:
+            self.fmt.addItem(label, key)
+        self.fmt.setCurrentIndex([k for _, k in SAVE_FORMATS].index(fmt) if fmt in [k for _, k in SAVE_FORMATS] else 0)
+        self.fmt.setStyleSheet(f"background:{win.th['bg']};border:1px solid {win.th['border']};")
+        self.fmt.setMinimumHeight(34)
+        self.lay.addWidget(self.fmt)
+        l2 = QLabel("Куда — выбери проект или папку")
+        l2.setObjectName("Muted")
+        self.lay.addWidget(l2)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setMinimumHeight(240)
+        self.tree.setIconSize(QSize(18, 18))
+        self.tree.setStyleSheet(f"QTreeWidget{{background:{win.th['bg']};border:1px solid {win.th['border']};"
+                                f"border-radius:12px;padding:6px;outline:none;}} QTreeWidget::item{{padding:4px 2px;border-radius:8px;}}"
+                                f"QTreeWidget::item:selected{{background:{win.th['soft']};color:{win.th['text']};}}")
+        self.lay.addWidget(self.tree)
+        root = win.browser.root
+        self.items = {}
+        top = QTreeWidgetItem(["Мои проекты"])
+        top.setIcon(0, QIcon(cached_svg("home", win.th["accent"], 18)))
+        top.setData(0, Qt.ItemDataRole.UserRole, str(root))
+        self.tree.addTopLevelItem(top)
+        self.items[str(root)] = top
+        self._fill(top, root, 0)
+        top.setExpanded(True)
+        start = str(start_dir) if start_dir else str(root)
+        sel = self.items.get(start)
+        if sel is None:  # папка вне проектов (например, файл открыт с рабочего стола)
+            sel = QTreeWidgetItem([Path(start).name or start])
+            sel.setIcon(0, QIcon(cached_svg("folder", win.th["muted"], 18)))
+            sel.setData(0, Qt.ItemDataRole.UserRole, start)
+            sel.setToolTip(0, start)
+            self.tree.addTopLevelItem(sel)
+            self.items[start] = sel
+        p = sel.parent()
+        while p is not None:
+            p.setExpanded(True)
+            p = p.parent()
+        self.tree.setCurrentItem(sel)
+        row = QHBoxLayout()
+        nf = QPushButton("Новая папка")
+        nf.setObjectName("Ghost")
+        nf.clicked.connect(self.new_folder)
+        other = QPushButton("Другое место на компьютере…")
+        other.setObjectName("Ghost")
+        other.clicked.connect(self.pick_other)
+        row.addWidget(nf)
+        row.addWidget(other)
+        row.addStretch()
+        self.lay.addLayout(row)
+        self.finish()
+        self.name.setFocus()
+        self.name.selectAll()
+
+    def _fill(self, parent_item, folder, depth):
+        from PySide6.QtWidgets import QTreeWidgetItem
+        if depth > 6:
+            return
+        try:
+            subs = sorted([Path(e.path) for e in os.scandir(folder) if e.is_dir() and visible(e.name)],
+                          key=lambda p: p.name.casefold())
+        except OSError:
+            return
+        for d in subs:
+            it = QTreeWidgetItem([d.name])
+            it.setIcon(0, QIcon(cached_svg("folder", folder_color(d), 18)))
+            it.setData(0, Qt.ItemDataRole.UserRole, str(d))
+            parent_item.addChild(it)
+            self.items[str(d)] = it
+            self._fill(it, d, depth + 1)
+
+    def folder(self):
+        it = self.tree.currentItem()
+        return Path(it.data(0, Qt.ItemDataRole.UserRole)) if it else self.win.browser.root
+
+    def new_folder(self):
+        from PySide6.QtWidgets import QTreeWidgetItem
+        dlg = NameDialog(self, "Новая папка", "Создать", "Новая папка", with_color=True)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        p = unique_path(self.folder(), dlg.value())
+        try:
+            p.mkdir(parents=True)
+            set_folder_color(p, dlg.color)
+        except OSError as e:
+            QMessageBox.warning(self, APP_NAME, f"Не получилось создать папку:\n{e}")
+            return
+        parent = self.tree.currentItem()
+        it = QTreeWidgetItem([p.name])
+        it.setIcon(0, QIcon(cached_svg("folder", dlg.color, 18)))
+        it.setData(0, Qt.ItemDataRole.UserRole, str(p))
+        parent.addChild(it)
+        parent.setExpanded(True)
+        self.items[str(p)] = it
+        self.tree.setCurrentItem(it)
+
+    def pick_other(self):
+        from PySide6.QtWidgets import QTreeWidgetItem
+        d = QFileDialog.getExistingDirectory(self, "Папка на компьютере", str(self.folder()))
+        if not d:
+            return
+        it = self.items.get(d)
+        if it is None:
+            it = QTreeWidgetItem([Path(d).name or d])
+            it.setIcon(0, QIcon(cached_svg("folder", self.win.th["muted"], 18)))
+            it.setData(0, Qt.ItemDataRole.UserRole, d)
+            it.setToolTip(0, d)
+            self.tree.addTopLevelItem(it)
+            self.items[d] = it
+        self.tree.setCurrentItem(it)
+
+    def result(self):
+        fmt = self.fmt.currentData()
+        return self.folder() / f"{safe_name(self.name.text())}.{fmt}", fmt
+
+
 # ───────────────────────────── Обновления через GitHub ─────────────────────────────
 def version_tuple(v):
     nums = [int(x) for x in re.findall(r"\d+", v or "")[:3]]
@@ -5895,6 +6188,8 @@ class Folio(QMainWindow):
         self.newline = "\r\n"
         self.icon_buttons = []
         self._updating = False
+        self.tabs = []      # открытые документы: doc, path, fmt, encoding, newline, стикеры
+        self.cur_tab = -1
 
         self.theme_mode = self.settings.value("theme", "system")
         if self.theme_mode not in ("light", "dark", "system"):
@@ -6290,7 +6585,14 @@ class Folio(QMainWindow):
         g.addWidget(left_pill, 0, 0)
         g.addWidget(self.glass, 0, 1)
         g.addWidget(right_pill, 0, 2, 1, 2)
-        g.addWidget(findbar, 1, 1)
+        self.tabbar = TabStrip(self)
+        top_mid = QWidget()
+        tm = QVBoxLayout(top_mid)
+        tm.setContentsMargins(0, 0, 0, 0)
+        tm.setSpacing(8)
+        tm.addWidget(self.tabbar)
+        tm.addWidget(findbar)
+        g.addWidget(top_mid, 1, 1)
         g.addWidget(self.hruler, 2, 1)
         g.addWidget(self.board, 3, 0)
         g.addWidget(self.editor, 3, 1)
@@ -6445,6 +6747,9 @@ class Folio(QMainWindow):
         glob("Ctrl+N", self.new_shortcut)
         glob("Ctrl+O", self.open_dialog)
         sc("Alt+Left", self.go_home)
+        sc("Ctrl+W", lambda: self.close_tab())
+        sc("Ctrl+Tab", lambda: self.next_tab(1))
+        sc("Ctrl+Shift+Tab", lambda: self.next_tab(-1))
         sc("Ctrl+K", self.insert_link)
         sc("Ctrl+S", self.save)
         sc("Ctrl+Shift+S", self.save_as)
@@ -6651,6 +6956,12 @@ class Folio(QMainWindow):
                  padding: 2px 10px; color: {th['muted']}; font-size: 8.5pt; font-weight: 600; }}
         #FmtBar {{ background: {th['surface']}; border: 1px solid {th['border']}; border-radius: 23px; }}
         #Board QToolButton#AddBtn {{ border-radius: 17px; }}
+        QWidget#Tab, QWidget#TabCur {{ border-radius: 15px; }}
+        QWidget#TabCur {{ background: {th['page']}; border: 1px solid {th['border']}; }}
+        QWidget#Tab:hover {{ background: {th['hover']}; }}
+        QPushButton#TabLabel {{ background: transparent; border: none; padding: 4px 4px; color: {th['muted']}; }}
+        QWidget#TabCur QPushButton#TabLabel {{ color: {th['text']}; font-weight: 600; }}
+        QToolButton#TabClose {{ border-radius: 11px; }}
         #Sep {{ background: {th['border']}; }}
         QToolButton {{ background: transparent; border: none; border-radius: 18px; }}
         QToolButton:hover {{ background: {th['hover']}; }}
@@ -6863,24 +7174,120 @@ class Folio(QMainWindow):
         self.title_label.setToolTip(f"{name}\n{sub}")
         self.sub_label.setToolTip(sub)
         self.setWindowTitle(f"{'• ' if dirty else ''}{name} — {APP_NAME}")
+        if hasattr(self, "tabbar") and self.tabbar.isVisible():
+            self.tabbar.rebuild()
         self.format_chip.setText(self.fmt.upper() + (f" · {self.encoding.upper()}" if self.fmt == "txt" else ""))
 
     def new_document(self, ask=True):
-        if ask and not self.maybe_save():
+        if self.tabs and self.is_blank_tab():
+            self.stack.setCurrentWidget(self.editor_page)
+            self.editor.setFocus()
             return
-        self.editor.setDocument(QTextDocument(self.editor))
+        self.new_tab_slot()
+        self.editor.setDocument(QTextDocument(self))
         self.path, self.fmt, self.encoding, self.newline = None, "docx", "utf-8", "\r\n"
         self._target = None
         self.stickers.load(None)
         self.setup_document()
+        self._sync_tab()
         self.update_title()
         self.update_counts()
         self.sync_toolbar()
+        self.tabbar.rebuild()
         self.editor.setFocus()
 
-    def open_dialog(self):
+    # ── Вкладки ──
+    def is_blank_tab(self):
+        return (not self.path and not self.doc().isModified() and not self.doc().toPlainText().strip()
+                and not self.stickers.items)
+
+    def new_tab_slot(self):
+        """Освобождает место под новый документ: текущая вкладка сохраняется в списке."""
+        if self.cur_tab >= 0 and self.tabs:
+            self._stash()
+        self.tabs.append({})
+        self.cur_tab = len(self.tabs) - 1
+
+    def _sync_tab(self):
+        if 0 <= self.cur_tab < len(self.tabs):
+            self.tabs[self.cur_tab].update(doc=self.editor.document(), path=self.path, fmt=self.fmt,
+                                           encoding=self.encoding, newline=self.newline)
+
+    def _stash(self):
+        if not (0 <= self.cur_tab < len(self.tabs)):
+            return
+        self.stickers.save()
+        self._sync_tab()
+        t = self.tabs[self.cur_tab]
+        t["stickers"] = self.stickers.dump()
+        t["cursor"] = self.editor.textCursor().position()
+        t["scroll"] = self.editor.verticalScrollBar().value()
+
+    def tab_index(self, path):
+        try:
+            rp = Path(path).resolve()
+        except OSError:
+            return -1
+        for i, t in enumerate(self.tabs):
+            p = self.path if i == self.cur_tab else t.get("path")
+            if p and Path(p).resolve() == rp:
+                return i
+        return -1
+
+    def switch_tab(self, i):
+        if not (0 <= i < len(self.tabs)):
+            return
+        if i != self.cur_tab:
+            self._stash()
+            self._activate(i)
+        self.stack.setCurrentWidget(self.editor_page)
+        self.editor.setFocus()
+
+    def _activate(self, i):
+        self.cur_tab = i
+        t = self.tabs[i]
+        self.editor.setDocument(t["doc"])
+        self.path, self.fmt = t.get("path"), t.get("fmt", "docx")
+        self.encoding, self.newline = t.get("encoding", "utf-8"), t.get("newline", "\r\n")
+        self._target = None
+        self.stickers.load_data(t.get("stickers") or [], self.path)
+        c = self.editor.textCursor()
+        c.setPosition(min(t.get("cursor", 0), self.doc().characterCount() - 1))
+        self.editor.setTextCursor(c)
+        QTimer.singleShot(0, lambda v=t.get("scroll", 0): self.editor.verticalScrollBar().setValue(v))
+        self.undo_btn.setEnabled(self.doc().isUndoAvailable())
+        self.redo_btn.setEnabled(self.doc().isRedoAvailable())
+        self.editor.page_breaks_y = []
+        self.break_timer.start()
+        self.update_title()
+        self.update_counts()
+        self.sync_toolbar()
+        self.hruler.update()
+        self.inspector.rebuild()
+        self.tabbar.rebuild()
+
+    def close_tab(self, i=None):
+        i = self.cur_tab if i is None else i
+        if not (0 <= i < len(self.tabs)):
+            return
+        if i != self.cur_tab:
+            self.switch_tab(i)
         if not self.maybe_save():
             return
+        self.stickers.save()
+        self.tabs.pop(i)
+        self.cur_tab = -1
+        if not self.tabs:
+            self.new_document()
+            self.go_home()
+            return
+        self._activate(min(i, len(self.tabs) - 1))
+
+    def next_tab(self, step=1):
+        if len(self.tabs) > 1:
+            self.switch_tab((self.cur_tab + step) % len(self.tabs))
+
+    def open_dialog(self):
         start = self.settings.value("last_dir", str(Path.home() / "Documents"))
         path, _ = QFileDialog.getOpenFileName(
             self, "Открыть", start,
@@ -6890,7 +7297,7 @@ class Folio(QMainWindow):
             self.stack.setCurrentWidget(self.editor_page)
 
     def open_path_checked(self, path):
-        if self.maybe_save() and self.open_path(path):
+        if self.open_path(path):
             self.stack.setCurrentWidget(self.editor_page)
 
     def open_path(self, path):
@@ -6904,7 +7311,12 @@ class Folio(QMainWindow):
             QMessageBox.information(self, APP_NAME, f"Формат {ext} не поддерживается.\n"
                                                     "Folio открывает .docx, .txt, .md и .html.")
             return False
-        newdoc = QTextDocument(self.editor)
+        existing = self.tab_index(p)
+        if existing >= 0:  # уже открыт — просто переключаемся
+            self.switch_tab(existing)
+            return True
+        newdoc = QTextDocument(self)
+        enc, nl = "utf-8", "\r\n"
         try:
             if ext == ".docx":
                 load_docx(str(p), newdoc)
@@ -6920,17 +7332,19 @@ class Folio(QMainWindow):
                 else:
                     newdoc.setPlainText(text)
                     fmt = "txt"
-                self.encoding, self.newline = enc, nl
         except Exception as e:
             QMessageBox.warning(self, APP_NAME, f"Не получилось открыть файл:\n{p.name}\n\n{e}")
             return False
+        if not (self.tabs and self.is_blank_tab()):
+            self.new_tab_slot()
         self.editor.setDocument(newdoc)
         self.path, self.fmt = str(p), fmt
+        self.encoding, self.newline = enc, nl
         self._target = None
         self.stickers.load(str(p))
-        if fmt == "docx":
-            self.encoding = "utf-8"
         self.setup_document()
+        self._sync_tab()
+        self.tabbar.rebuild()
         self.settings.setValue("last_dir", str(p.parent))
         cur = self.editor.textCursor()
         cur.movePosition(QTextCursor.MoveOperation.Start)
@@ -6942,30 +7356,22 @@ class Folio(QMainWindow):
 
     # ── Переходы между экранами ──
     def open_from_browser(self, path):
-        if self.path and Path(self.path) == Path(path).resolve() and self.stack.currentWidget() is not self.editor_page:
-            self.stack.setCurrentWidget(self.editor_page)  # уже открыт
-            self.editor.setFocus()
-            return
-        if not self.maybe_save():
-            return
         if self.open_path(path):
             self.stack.setCurrentWidget(self.editor_page)
             self.editor.setFocus()
 
     def go_home(self):
-        if not self.maybe_save():
-            return
+        # несохранённые вкладки остаются открытыми — к ним можно вернуться
         if self.findbar.isVisible():
             self.toggle_find(False)
         self.stickers.save()
+        self._sync_tab()
         target = self.browser.cwd
         if self.path:
             parent = Path(self.path).parent
-            try:
-                parent.relative_to(self.browser.root)
+            ext = getattr(self.browser, "ext", None)
+            if self.browser.inside(parent, self.browser.root) or (ext and self.browser.inside(parent, ext[0])):
                 target = parent
-            except ValueError:
-                pass
         self.browser.navigate(target)
         if self.path:
             self.browser.select_path(Path(self.path))
@@ -6983,15 +7389,23 @@ class Folio(QMainWindow):
 
     def path_moved(self, old, new):
         """Файл или папка переехали — если открытый документ был внутри, обновляем путь."""
-        if not self.path:
-            return
-        cur, old, new = Path(self.path), Path(old), Path(new)
-        try:
-            rel = cur.relative_to(old)
-        except ValueError:
-            return
-        self.path = str(new / rel) if str(rel) != "." else str(new)
-        self.stickers.path = self.path
+        old, new = Path(old), Path(new)
+
+        def moved(p):
+            if not p:
+                return p
+            try:
+                rel = Path(p).relative_to(old)
+            except ValueError:
+                return p
+            return str(new / rel) if str(rel) != "." else str(new)
+        for i, t in enumerate(self.tabs):
+            if i != self.cur_tab:
+                t["path"] = moved(t.get("path"))
+        if self.path:
+            self.path = moved(self.path)
+            self.stickers.path = self.path
+        self._sync_tab()
         self.update_title()
 
     def show_update_available(self, tag):
@@ -7005,8 +7419,8 @@ class Folio(QMainWindow):
             self.show_toast(text)
 
     def prepare_quit(self):
-        """Перед обновлением: сохранить стикеры, спросить про несохранённый документ."""
-        if not self.maybe_save():
+        """Перед обновлением: сохранить стикеры, спросить про несохранённые документы."""
+        if not self.ask_save_all():
             return False
         self.stickers.save()
         self.settings.setValue("geometry", self.saveGeometry())
@@ -7118,37 +7532,91 @@ class Folio(QMainWindow):
     def save(self):
         if not self.path:
             return self.save_as()
+        if self.fmt in ("txt", "md") and has_rich_format(self.doc(), self.fmt):
+            choice = self.ask_keep_format()
+            if choice is None:
+                return False
+            if choice == "docx":
+                return self.convert_to_docx()
         return self.write_file(self.path, self.fmt)
+
+    def ask_keep_format(self):
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        kind = "простом тексте (.txt)" if self.fmt == "txt" else "Markdown (.md)"
+        box.setText(f"В {kind} оформление не сохранится")
+        box.setInformativeText("Жирный, цвета, шрифты, размеры и выравнивание пропадут, когда файл откроется снова.\n\n"
+                               "Сохранить как Word (.docx)? Получится новый файл рядом с этим, со всем оформлением — "
+                               "дальше Folio будет работать с ним.")
+        word = box.addButton("Сохранить как Word", QMessageBox.ButtonRole.AcceptRole)
+        plain = box.addButton("Без оформления", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(word)
+        box.exec()
+        c = box.clickedButton()
+        return "docx" if c is word else "plain" if c is plain else None
+
+    def convert_to_docx(self):
+        old = Path(self.path)
+        new = old.with_suffix(".docx")
+        if new.exists():
+            new = unique_path(old.parent, old.stem, ".docx")
+        if not self.write_file(str(new), "docx"):
+            return False
+        sc = sidecar_path(old)
+        if sc.exists():  # стикеры переезжают к новому файлу
+            try:
+                sc.unlink()
+            except OSError:
+                pass
+        self.path, self.fmt, self.encoding = str(new), "docx", "utf-8"
+        self._sync_tab()
+        self.update_title()
+        self.show_toast("Сохранено как Word ✓")
+        return True
 
     def save_as(self):
         if self.path:
-            start_dir = str(Path(self.path).parent)
-        elif not self.browser.at_root():
-            start_dir = str(self.browser.cwd)
+            start_dir = Path(self.path).parent
         else:
-            start_dir = self.settings.value("last_dir", str(Path.home() / "Documents"))
-        base = Path(self.path).stem if self.path else "Без названия"
-        filters = {"Документ Word (*.docx)": "docx", "Текст (*.txt)": "txt",
-                   "Markdown (*.md)": "md", "Веб-страница (*.html)": "html"}
-        order = list(filters)
-        current = next((f for f, k in filters.items() if k == self.fmt), order[0])
-        path, chosen = QFileDialog.getSaveFileName(self, "Сохранить как", str(Path(start_dir) / f"{base}.{self.fmt}"),
-                                                   ";;".join(order), current)
-        if not path:
+            start_dir = self.browser.cwd
+            if self.browser.at_root():
+                last = self.settings.value("last_save_dir", "")
+                if last and Path(last).is_dir():
+                    start_dir = Path(last)
+        base = Path(self.path).stem if self.path else self.suggest_name()
+        fmt = self.fmt
+        if fmt in ("txt", "md") and has_rich_format(self.doc(), fmt):
+            fmt = "docx"
+        dlg = SaveDialog(self, base, fmt, start_dir)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return False
-        fmt = filters.get(chosen, "docx")
-        ext = Path(path).suffix.lower()
-        by_ext = {".docx": "docx", ".txt": "txt", ".md": "md", ".markdown": "md", ".html": "html", ".htm": "html"}
-        if ext in by_ext:
-            fmt = by_ext[ext]
-        else:
-            path += "." + fmt
-        if not self.write_file(path, fmt):
+        path, fmt = dlg.result()
+        if path.exists() and (not self.path or path.resolve() != Path(self.path).resolve()):
+            box = QMessageBox(self)
+            box.setWindowTitle(APP_NAME)
+            box.setIcon(QMessageBox.Icon.NoIcon)
+            box.setText(f"«{path.name}» там уже есть. Заменить?")
+            yes = box.addButton("Заменить", QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() is not yes:
+                return False
+        if not self.write_file(str(path), fmt):
             return False
-        self.path, self.fmt = path, fmt
-        self.settings.setValue("last_dir", str(Path(path).parent))
+        self.path, self.fmt = str(path), fmt
+        self.settings.setValue("last_dir", str(path.parent))
+        if self.browser.inside(path, self.browser.root):
+            self.settings.setValue("last_save_dir", str(path.parent))
+        self._sync_tab()
         self.update_title()
+        self.browser.refresh()
         return True
+
+    def suggest_name(self):
+        first = self.doc().begin().text().strip()
+        return safe_name(first[:60]) if first else "Без названия"
 
     def write_file(self, path, fmt):
         try:
@@ -7180,6 +7648,7 @@ class Folio(QMainWindow):
             QMessageBox.warning(self, APP_NAME, f"Не получилось сохранить:\n{e}")
             return False
         self.doc().setModified(False)
+        self.tabbar.rebuild()
         if self.stickers.path != str(path):
             self.stickers.set_path(str(path))
         else:
@@ -7676,8 +8145,18 @@ class Folio(QMainWindow):
         self.show_toast(f"Заменено: {n}")
 
     # ── Окно ──
+    def ask_save_all(self):
+        """Спросить про каждый несохранённый документ во вкладках."""
+        for i in range(len(self.tabs)):
+            doc = self.doc() if i == self.cur_tab else self.tabs[i].get("doc")
+            if doc is not None and doc.isModified():
+                self.switch_tab(i)
+                if not self.maybe_save():
+                    return False
+        return True
+
     def closeEvent(self, e):
-        if self.maybe_save():
+        if self.ask_save_all():
             self.stickers.save()
             self.settings.setValue("geometry", self.saveGeometry())
             self.settings.setValue("last_folder", str(self.browser.cwd))
